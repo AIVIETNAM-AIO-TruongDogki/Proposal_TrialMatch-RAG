@@ -212,11 +212,28 @@ def segment_criteria(blob: str | None) -> tuple[list[Criterion], str]:
             continue
 
         if kind == "bullet":
-            saw_bullet = True
             m = BULLET_RE.match(line)
+            body = line[m.end():].strip()
+
+            # Header nam duoi dang bullet: "-  Exclusion Criteria:". Neu coi no
+            # la mot criterion thi section khong chuyen, va MOI criterion sau do
+            # bi gan nhan sai. O Phase 8 loi nay lat nguoc ket luan: mot tieu chi
+            # loai tru bi coi la tieu chi thu nhan se doi violated thanh satisfied.
+            if HEADER_RE.match(body) or HEADER_INLINE_RE.match(body):
+                cur = None
+                lead_in = None
+                section = _section_of(body)
+                mi = HEADER_INLINE_RE.match(body)
+                if mi:  # con noi dung sau dau hai cham
+                    s2 = start + m.end() + mi.start(2)
+                    cur = {"section": section, "start": s2, "end": start + len(line),
+                           "parts": [mi.group(2).strip()], "lead_in": None}
+                    blocks.append(cur)
+                continue
+
+            saw_bullet = True
             if re.match(r"^\s*(?:\(\d+\)|\d+[.)])", line):
                 saw_number = True
-            body = line[m.end():].strip()
             s2 = start + m.end()
             cur = {"section": section, "start": s2, "end": start + len(line),
                    "parts": [body], "lead_in": lead_in}
