@@ -1,1 +1,19 @@
-.rawdata
+rawdata
+documents
+CLAUDE.md
+IMPLEMENTATION_PLAN.md
+
+# Du lieu dan xuat: parse tu rawdata, dung lai duoc bang code
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Chi muc retrieval
+indexes/
+runs/
+
+# Python
+.venv/
+__pycache__/
+*.pyc

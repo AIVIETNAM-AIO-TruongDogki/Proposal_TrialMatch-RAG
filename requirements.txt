@@ -1,0 +1,19 @@
+# TrialMatch-RAG — moi truong (Phase 0-2)
+#
+#   uv venv && uv pip install -r requirements.txt
+#
+# Pin cung phien ban: ket qua retrieval phai tai lap duoc o Phase 11, ma mot
+# ban nang cap am tham cua scorer hay cua numpy du de lam lech con so.
+
+# Cham diem. KHONG tu viet nDCG — quy uoc gain va nguong nhi phan cua trec_eval
+# deu de doan sai (xem src/eval/verify.py).
+pytrec_eval-terrier==0.5.10
+
+# Kiem dinh paired bootstrap
+numpy==2.5.2
+scipy==1.18.1
+
+# Doc corpus / benchmark
+lxml==6.1.2
+ir_datasets==0.6.3
+tqdm==4.70.0
