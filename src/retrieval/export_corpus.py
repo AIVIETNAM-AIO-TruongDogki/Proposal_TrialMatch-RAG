@@ -44,13 +44,24 @@ FROM trials t
 """
 
 
-def build_contents(row: sqlite3.Row | tuple, with_criteria: bool = False) -> str:
+def build_contents(row: sqlite3.Row | tuple, with_criteria: bool = False,
+                   boost: int = 1) -> str:
     """Ghep van ban index tu mot dong bulk query.
 
-    Phai cho ra ket qua y het retrieval_text(get_trial(...)). Xem --verify.
+    boost = 1  -> thu tu goc, khop y het retrieval_text(get_trial(...)).
+    boost > 1  -> lap lai title + conditions `boost` lan va dua len dau.
+                  Lucene khong cho dat trong so truong luc search, nen day la
+                  cach xap xi chuan: tang tan suat term = tang diem BM25.
+
+    with_criteria them criteria_raw vao cuoi. Do la bien the THANG o Phase 3
+    (elig nDCG@10 0.1600 -> 0.2070), trai voi ghi chu trong store.retrieval_text().
     """
     _, title, summary, cond, intv, mesh, kw, crit = row
-    parts = [title, summary, cond, intv, mesh, kw]
+    if boost > 1:
+        parts = ["\n".join([title or "", cond or ""] * boost),
+                 summary, intv, mesh, kw]
+    else:
+        parts = [title, summary, cond, intv, mesh, kw]
     if with_criteria and crit:
         parts.append(crit)
     return "\n".join(p for p in parts if p)
@@ -77,7 +88,7 @@ def verify(conn: sqlite3.Connection, n: int = 200, seed: int = 0) -> int:
 
 
 def export(conn: sqlite3.Connection, out_dir: str, with_criteria: bool,
-           shard_size: int = 100_000) -> tuple[int, int]:
+           boost: int = 1, shard_size: int = 100_000) -> tuple[int, int]:
     """Ghi JSONL, chia nhieu shard de Pyserini index song song."""
     os.makedirs(out_dir, exist_ok=True)
     for f in os.listdir(out_dir):
@@ -92,7 +103,7 @@ def export(conn: sqlite3.Connection, out_dir: str, with_criteria: bool,
                 fh.close()
             fh = open(os.path.join(out_dir, f"docs{n // shard_size:02d}.jsonl"),
                       "w", encoding="utf-8")
-        contents = build_contents(row, with_criteria)
+        contents = build_contents(row, with_criteria, boost)
         if not contents.strip():
             # Trial khong co van ban nao de index. Van ghi ra de tong so doc
             # trong index khop 375.580 — thieu doc thi recall bi tinh sai.
@@ -111,20 +122,25 @@ def main() -> int:
     ap.add_argument("--out", default=None,
                     help="mac dinh: data/jsonl/base hoac data/jsonl/crit")
     ap.add_argument("--with-criteria", action="store_true",
-                    help="them criteria_raw vao van ban index (ban de ablate)")
+                    help="them criteria_raw vao van ban index")
+    ap.add_argument("--boost", type=int, default=1,
+                    help="lap lai title+conditions N lan (mac dinh 1 = khong boost)")
     ap.add_argument("--skip-verify", action="store_true")
     args = ap.parse_args()
 
-    out = args.out or ("data/jsonl/crit" if args.with_criteria else "data/jsonl/base")
+    # Ten thu muc suy tu cau hinh, de khong bao gio lan bien the voi nhau.
+    variant = ("crit" if args.with_criteria else "base") + \
+              (f"_x{args.boost}" if args.boost > 1 else "")
+    out = args.out or f"data/jsonl/{variant}"
     conn = open_db(args.db)
 
-    if not args.skip_verify and not args.with_criteria:
+    if not args.skip_verify and not args.with_criteria and args.boost == 1:
         if verify(conn) != 0:
             print("Dung lai: bulk query khong khop retrieval_text().", file=sys.stderr)
             return 1
 
     t0 = time.time()
-    n, empty = export(conn, out, args.with_criteria)
+    n, empty = export(conn, out, args.with_criteria, args.boost)
     size = sum(os.path.getsize(os.path.join(out, f)) for f in os.listdir(out))
     print(f"Da ghi {n:,} doc vao {out}/  ({size/1e9:.2f} GB, {time.time()-t0:.0f}s)")
     if empty:
