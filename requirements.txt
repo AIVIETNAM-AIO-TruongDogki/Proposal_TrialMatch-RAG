@@ -17,3 +17,15 @@ scipy==1.18.1
 lxml==6.1.2
 ir_datasets==0.6.3
 tqdm==4.70.0
+
+# Backend Gemini (Phase 4) — round-robin 3 API key, doc tu .env, khong bao gio
+# hardcode key vao code
+google-genai==2.20.0
+python-dotenv==1.2.3
+
+# Goi HTTP truc tiep (ollama.py) — da la dependency bac cau qua pyserini nhung
+# chua tung duoc khai bao rieng
+requests==2.34.2
+
+# Tai lai rawdata/ tu Hugging Face Hub tren mot may moi (src/fetch_data.py)
+huggingface_hub==1.29.0
