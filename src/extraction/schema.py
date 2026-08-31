@@ -34,6 +34,8 @@ co the khong noi tuoi, va model phai duoc phep im lang thay vi doan.
 
 from __future__ import annotations
 
+import prompts
+
 # Nhom thuc the trich xuat. Thu tu nay dung lai o query.py va o bang bao cao.
 LIST_FIELDS = (
     "conditions",        # chan doan, benh chinh
@@ -107,48 +109,66 @@ PROFILE_SCHEMA = {
     "additionalProperties": False,
 }
 
-SYSTEM_PROMPT = """\
-You extract structured clinical facts from a patient narrative for clinical \
-trial matching. You are a careful medical information extractor, not a \
-diagnostician.
+# Noi dung prompt song trong prompts/*.txt, khong phai hang so Python — sua
+# prompt khong con dong nghia voi sua code, va diff tren prompt la diff dung
+# tren prompt.
+SYSTEM_PROMPT = prompts.load("extraction_system")
+USER_TEMPLATE = prompts.load("extraction_user")
 
-Rules, in order of importance:
+# --- Goi theo lo (batch) -----------------------------------------------------
+#
+# extract.py goi Gemini mot lan cho N benh an thay vi N lan rieng, de do so
+# request khi dung free tier (5 req/phut, 20 req/ngay — xem
+# docs/decisions/phase4-gemini-backend.md). N benh an DOC LAP voi nhau; addendum
+# duoi day noi ro dieu do va cam tron thong tin giua cac benh an.
+#
+# Moi phan tu tra ve mang them `index` de khop lai DUNG benh an ban dau — khong
+# dua vao thu tu mang tra ve, vi mot loi khop sai se gan ho so cua benh nhan
+# nay cho benh nhan khac, dung dieu invariant 3 (moi ket luan phai co can cu
+# dung nguon) cam.
+BATCH_SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + prompts.load("extraction_batch_addendum")
 
-1. NEVER infer, impute, or guess. Extract only what the narrative literally \
-states. If the narrative does not mention something, leave it out entirely. \
-Omission is a correct answer; guessing is not.
+_BATCH_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {"index": {"type": "integer"}, **PROFILE_SCHEMA["properties"]},
+    "required": ["index", *PROFILE_SCHEMA["required"]],
+    "additionalProperties": False,
+}
 
-2. Every extracted value MUST carry an `evidence` field containing a VERBATIM \
-substring of the narrative. Copy the exact characters. Do not paraphrase, \
-normalize, expand abbreviations, or fix typos inside `evidence`. If you cannot \
-quote it exactly, do not extract it.
 
-3. Distinguish two different things:
-   - status "present": the narrative says the patient HAS it.
-   - status "negated": the narrative says the patient does NOT have it \
-("no history of diabetes", "denies chest pain", "ruled out for sepsis").
-   A negation is a clinical fact worth recording. Record it as "negated" with \
-the negating phrase as evidence. Never record it as "present", and never drop \
-it silently.
+def batch_schema(n: int) -> dict:
+    """Schema cho mot lan goi gom n ho so — PROFILE_SCHEMA cong truong `index`."""
+    return {
+        "type": "object",
+        "properties": {
+            "profiles": {"type": "array", "items": _BATCH_ITEM_SCHEMA,
+                        "minItems": n, "maxItems": n},
+        },
+        "required": ["profiles"],
+        "additionalProperties": False,
+    }
 
-4. If the narrative does not mention a condition at all, it does not belong in \
-the output in any form.
 
-5. `name` should be the clinical concept in its normal form (e.g. "type 2 \
-diabetes"). Only `evidence` must be verbatim.
-"""
-
-USER_TEMPLATE = "Patient narrative:\n\n{narrative}\n\nExtract the structured profile."
+def batch_user_prompt(narratives: list[str]) -> str:
+    header = prompts.load("extraction_batch_header").format(n=len(narratives))
+    item_tpl = prompts.load("extraction_batch_item")
+    items = "\n\n".join(item_tpl.format(index=i, narrative=narr)
+                        for i, narr in enumerate(narratives))
+    return f"{header}\n\n{items}"
 
 
 def prompt_hash() -> str:
     """Van tay cua prompt + schema, dung lam mot phan khoa cache.
 
     Doi prompt hay doi schema thi cache phai hong — neu khong ta se so sanh
-    ket qua cua hai cau hoi khac nhau va tuong la so sanh hai model.
+    ket qua cua hai cau hoi khac nhau va tuong la so sanh hai model. Hash tren
+    BATCH_SYSTEM_PROMPT (da bao gom SYSTEM_PROMPT ben trong) vi do la thu
+    extract.py thuc su gui di.
     """
     import hashlib
     import json
 
-    blob = SYSTEM_PROMPT + USER_TEMPLATE + json.dumps(PROFILE_SCHEMA, sort_keys=True)
+    blob = (BATCH_SYSTEM_PROMPT + prompts.load("extraction_batch_header") +
+            prompts.load("extraction_batch_item") +
+            json.dumps(PROFILE_SCHEMA, sort_keys=True))
     return hashlib.sha256(blob.encode()).hexdigest()[:12]

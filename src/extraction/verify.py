@@ -12,11 +12,19 @@ NHAN VANG MIEN PHI
 ------------------
 Tuoi va gioi gan nhu luon nam o cau dau benh an. Regex duoi day da do tren ca
 75 topic dev: **tuoi 75/75, gioi 74/75**. Truong hop trot duy nhat la topic
-2021_14 ("70 y/o with COPD...") — benh an that su KHONG noi gioi tinh.
+2021_14 ("70 y/o with COPD...").
 
-Vi vay 2021_14 khong phai lo hong cua regex; no la mot BAY co gia tri:
-model nao xuat ra gioi tinh cho benh an nay la dang bia, va ta bat duoc dieu do
-ma khong ton mot dong gan nhan tay nao. Xem FABRICATION_TRAPS.
+DINH CHINH (2026-08-30, phat hien khi hand-audit): 2021_14 KHONG phai benh an
+"khong noi gioi tinh" nhu ghi chu cu khang dinh. Benh an CO noi — "She has had
+decreased appetite, PO intake, energy level at home" (vi tri 566) — nhung
+gold_age_sex() chi doc 220 ky tu DAU nen khong thay. Day la gioi han cua nhan
+vang, khong phai dac diem cua benh an.
+
+Bay van con gia tri, nhung vi mot ly do KHAC: gemini-3.6-flash tra ve
+sex="female" voi evidence="Daughter". Ket luan DUNG, can cu SAI — co con gai
+khong chung minh benh nhan la nu. Do la loi suy luan ma kiem tra chuoi con
+khong bat duoc (evidence co that, du ngan), nen `fabricated` o day nen doc la
+"can cu dang ngo" chu khong phai "gia tri bia dat". Xem FABRICATION_TRAPS.
 
 PHEP DO NAY KHONG BAT DUOC GI — DOC TRUOC KHI TIN VAO CON SO
 ------------------------------------------------------------
@@ -66,7 +74,9 @@ _SEX_F = re.compile(r"\b(?:woman|female|lady|girl)\b", re.I)
 _PRO_M = re.compile(r"\b(?:he|his|him)\b", re.I)
 _PRO_F = re.compile(r"\b(?:she|her|hers)\b", re.I)
 
-# Benh an KHONG noi gioi tinh. Model nao dien vao la dang bia.
+# Benh an co noi gioi tinh nhung o NGOAI 220 ky tu dau (xem dinh chinh trong
+# docstring module), nen gold_age_sex() khong thay. Giu lai lam bay vi model
+# tra loi dung ma can cu sai ("Daughter" khong chung minh benh nhan la nu).
 FABRICATION_TRAPS = {"2021_14": "sex"}
 
 # Dau hieu phu dinh — dung do xem model co bat duoc `negated` khong.
@@ -215,7 +225,7 @@ def score_model(model: str, year: int, topics: dict[str, str],
     path = os.path.join(profile_dir, f"{year}.{model.replace(':', '_')}.json")
     if not os.path.exists(path):
         return None
-    recs = json.load(open(path, encoding="utf-8"))
+    recs = json.load(open(path, encoding="utf-8"))["records"]
 
     n = len(recs)
     valid = tot_vals = ok_vals = loc_vals = 0
@@ -304,9 +314,12 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    models = sorted({f.split(".", 2)[1].replace("_", ":", 1)
+    # Ten model co the chua dau cham (`gemini-3.6-flash`), nen phai cat theo
+    # tien to/hau to co dinh chu khong split(".") — split se cat nham giua ten.
+    prefix, suffix = f"{args.year}.", ".json"
+    models = sorted({f[len(prefix):-len(suffix)].replace("_", ":", 1)
                      for f in os.listdir(args.profile_dir)
-                     if f.startswith(f"{args.year}.") and f.endswith(".json")})
+                     if f.startswith(prefix) and f.endswith(suffix)})
     rows = [r for m in models if (r := score_model(m, args.year, topics, args.profile_dir))]
     if not rows:
         print("Khong co ket qua nao.", file=sys.stderr)

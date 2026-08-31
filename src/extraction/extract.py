@@ -1,6 +1,6 @@
-"""Phase 4 buoc 3 — chay trich xuat, co cache.
+"""Phase 4 buoc 3 — chay trich xuat theo lo (batch), co cache.
 
-    python -m src.extraction.extract --year 2021 --model qwen2.5:7b-instruct
+    python -m src.extraction.extract --year 2021 --model gemini-3.6-flash
 
 Ghi ra data/profiles/{year}.{model}.json. Moi ban ghi giu CA HAI phien ban:
 `profile` tho tu model va `clean` sau khi loc grounding, kem `dropped` — danh
@@ -9,6 +9,20 @@ sach nhung gi bi vut vi khong trich dan duoc.
 Giu lai phan bi vut la co y. "Ty le grounding 91%" chi la mot con so; danh sach
 9% bi vut moi cho biet model bia KIEU GI, va do la thu can cho hand-audit o
 buoc 5. Neu chi ghi ban da loc thi ta xoa mat bang chung cua chinh phep do.
+
+GOI THEO LO
+-----------
+Moi lan goi Gemini xu ly `--batch-size` benh an cung luc (mac dinh 5) thay vi
+tung benh an mot — giam so request tren free tier (5/phut, 20/ngay, xem
+docs/decisions/phase4-gemini-backend.md). Model tra ve moi ho so kem `index`
+de khop lai DUNG benh an; index thieu, trung, hoac ngoai khoang chi lam HONG
+benh an do, khong lam hong ca lo (xem schema.batch_schema).
+
+`seconds` ghi trong ban ghi la thoi gian CA LO chia deu cho so benh an trong
+lo, de trung binh "s/goi" cua verify.py van doc duoc nhu "giay moi benh an".
+`prompt_tokens`/`output_tokens` giu nguyen TONG CA LO — chia deu se sai vi
+phan lon token he thong (system prompt) chi ton mot lan cho ca lo, khong
+phai N lan.
 
 CACHE
 -----
@@ -26,9 +40,10 @@ import sys
 import time
 
 from src.eval import data
-from src.extraction import ollama, schema, verify
+from src.extraction import gemini, schema, verify
 
 PROFILE_DIR = "data/profiles"
+BATCH_SIZE = 5
 
 
 def load_cache(path: str, ph: str) -> dict:
@@ -44,8 +59,14 @@ def load_cache(path: str, ph: str) -> dict:
     return blob.get("records", {})
 
 
+def _save(path: str, ph: str, model: str, recs: dict) -> None:
+    json.dump({"prompt_hash": ph, "model": model, "records": recs},
+              open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+
+
 def run(model: str, year: int, limit: int | None = None,
-        profile_dir: str = PROFILE_DIR, force: bool = False) -> int:
+        profile_dir: str = PROFILE_DIR, force: bool = False,
+        batch_size: int = BATCH_SIZE) -> int:
     topics = data.load_topics(year)
     if limit:
         topics = dict(list(topics.items())[:limit])
@@ -56,36 +77,70 @@ def run(model: str, year: int, limit: int | None = None,
     recs = {} if force else load_cache(path, ph)
 
     todo = [t for t in topics if t not in recs]
+    n_batches = -(-len(todo) // batch_size) if todo else 0
     print(f"{model}: {len(topics)} benh an, {len(recs)} da co cache, "
-          f"{len(todo)} can goi")
+          f"{len(todo)} can goi ({n_batches} lo x{batch_size})")
 
     t0 = time.time()
-    for i, tid in enumerate(todo, 1):
-        narrative = topics[tid]
-        prof, meta = ollama.chat_json(
-            model, schema.SYSTEM_PROMPT,
-            schema.USER_TEMPLATE.format(narrative=narrative),
-            schema.PROFILE_SCHEMA)
+    done = 0
+    for bi, start in enumerate(range(0, len(todo), batch_size), 1):
+        batch_ids = todo[start:start + batch_size]
+        narratives = [topics[tid] for tid in batch_ids]
 
-        rec: dict = {"seconds": meta["seconds"],
-                     "prompt_tokens": meta["prompt_tokens"],
-                     "output_tokens": meta["output_tokens"],
-                     "profile": prof}
-        if prof is not None and verify.schema_ok(prof):
-            rec["clean"], rec["dropped"] = verify.verify_profile(prof, narrative)
-        else:
-            # Giu lai chuoi tho de go loi: biet model tra ve CAI GI khi hong
-            # quan trong hon la chi biet rang no hong.
-            rec["clean"], rec["dropped"] = None, None
-            rec["raw"] = meta["raw"][:2000]
+        try:
+            out, meta = gemini.chat_json(
+                model, schema.BATCH_SYSTEM_PROMPT,
+                schema.batch_user_prompt(narratives),
+                schema.batch_schema(len(batch_ids)))
+        except gemini.GeminiError as e:
+            # Loi ha tang (het quota, mang...) la TAM THOI — KHONG ghi vao
+            # recs, de lan chay sau (khong can --force) tu dong thu lai thay
+            # vi bi coi la "da xong" mai mai. Khac voi nhanh hong ben duoi
+            # (JSON sai dinh dang / khop index that bai), von it co co hoi
+            # tu sua khi chay lai voi cung dau vao nen van duoc cache.
+            done += len(batch_ids)
+            print(f"  lo {bi}/{n_batches} LOI TAM THOI (se thu lai o lan chay "
+                  f"sau): {e}", file=sys.stderr)
+            continue
 
-        recs[tid] = rec
-        if i % 10 == 0 or i == len(todo):
-            el = time.time() - t0
-            print(f"  {i}/{len(todo)}  {el:.0f}s  ({el/i:.1f}s/benh an)", flush=True)
+        per_topic_seconds = round(meta["seconds"] / len(batch_ids), 2)
+        items = (out or {}).get("profiles") or []
+        by_index: dict[int, dict] = {}
+        for it in items:
+            idx = it.get("index") if isinstance(it, dict) else None
+            if isinstance(idx, int) and 0 <= idx < len(batch_ids) and idx not in by_index:
+                by_index[idx] = it
+            # index thieu / trung / ngoai khoang: bo qua — benh an tuong ung
+            # se roi vao nhanh "hong" ben duoi thay vi khop nham benh nhan.
 
-        json.dump({"prompt_hash": ph, "model": model, "records": recs},
-                  open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        for i, tid in enumerate(batch_ids):
+            narrative = narratives[i]
+            it = by_index.get(i)
+            prof = {k: v for k, v in it.items() if k != "index"} if it else None
+
+            rec: dict = {"seconds": per_topic_seconds,
+                        "prompt_tokens": meta["prompt_tokens"],
+                        "output_tokens": meta["output_tokens"],
+                        "batch_size": len(batch_ids),
+                        "profile": prof}
+            if prof is not None and verify.schema_ok(prof):
+                rec["clean"], rec["dropped"] = verify.verify_profile(prof, narrative)
+            else:
+                # Giu lai chuoi tho de go loi: biet model tra ve CAI GI khi
+                # hong quan trong hon la chi biet rang no hong.
+                rec["clean"], rec["dropped"] = None, None
+                rec["raw"] = meta["raw"][:2000]
+            recs[tid] = rec
+
+        done += len(batch_ids)
+        el = time.time() - t0
+        print(f"  lo {bi}/{n_batches}  {done}/{len(todo)} benh an  {el:.0f}s  "
+              f"({el/done:.1f}s/benh an)", flush=True)
+        _save(path, ph, model, recs)
+
+    # Goi lai vo dieu kien: neu lo cuoi cung loi tam thoi (khong _save() rieng),
+    # file van phai phan anh dung recs hien tai truoc khi in thong bao ben duoi.
+    _save(path, ph, model, recs)
 
     n_bad = sum(1 for r in recs.values() if r.get("clean") is None)
     n_drop = sum(len(r["dropped"]) for r in recs.values() if r.get("dropped"))
@@ -97,33 +152,26 @@ def run(model: str, year: int, limit: int | None = None,
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True)
+    ap.add_argument("--model", default=gemini.MODEL)
     ap.add_argument("--year", type=int, default=data.DEV_YEAR, choices=[2021, 2022])
     ap.add_argument("--limit", type=int, default=None, help="chi chay N benh an dau")
     ap.add_argument("--profile-dir", default=PROFILE_DIR)
     ap.add_argument("--force", action="store_true", help="bo qua cache")
-    ap.add_argument("--unload", action="store_true",
-                    help="nha model khoi VRAM khi xong (truoc khi chay encoder)")
+    ap.add_argument("--batch-size", type=int, default=BATCH_SIZE,
+                    help="so benh an moi lan goi Gemini (mac dinh 5)")
     args = ap.parse_args()
 
     if args.year == data.TEST_YEAR:
         print("!! Dang chay tren TAP TEST 2022 — Phase 4 chi lam tren dev.",
               file=sys.stderr)
 
-    if not ollama.is_up():
-        print("Ollama khong chay. Thu: ollama serve", file=sys.stderr)
-        return 1
-    have = ollama.list_models()
-    if args.model not in have:
-        print(f"Chua co model {args.model}. Dang co:\n  " + "\n  ".join(have),
+    if not gemini.KEYS:
+        print("Khong co GEMINI_API_KEY_1/2/3 nao trong .env. Xem .env.example.",
               file=sys.stderr)
         return 1
 
-    rc = run(args.model, args.year, args.limit, args.profile_dir, args.force)
-    if args.unload:
-        ollama.unload(args.model)
-        print(f"Da nha {args.model} khoi VRAM")
-    return rc
+    return run(args.model, args.year, args.limit, args.profile_dir, args.force,
+              args.batch_size)
 
 
 if __name__ == "__main__":
