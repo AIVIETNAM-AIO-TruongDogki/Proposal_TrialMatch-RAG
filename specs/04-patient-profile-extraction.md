@@ -43,15 +43,51 @@ negation handled correctly in every case where the narrative contains a negation
 gets you on clinical eligibility text; IELab [T2] for LLM-generated synthetic patient descriptions used
 as training data for this exact collection. Full citations in [reading-list.md](reading-list.md).
 
-## Deployment decision: fully local, no API
+## Deployment decision: reversed — Gemini API, round-robin, not local-only
 
-Every generative call in this project (Phases 4, 8, 9) runs on local Ollama. For patient-to-trial
-matching this is **the medically defensible design, not a budget compromise**: the input is a clinical
-narrative, and a system where patient text never leaves the machine is what a hospital could actually
-deploy. Record it in the write-up as a deliberate design choice.
+**Superseded.** The original decision below ("fully local, no API") held through the corpus, harness,
+and lexical-retrieval phases. For Phase 4 extraction it has been **explicitly reversed**: the primary
+backend is now the **Google Gemini API** (`gemini-3.6-flash`), called through `src/extraction/gemini.py`
+with **round-robin rotation across 3 API keys** (one key per call, advancing regardless of success —
+spreads load across each key's own rate limit rather than only failing over on error). Full record in
+[`docs/decisions/phase4-gemini-backend.md`](../docs/decisions/phase4-gemini-backend.md).
 
-The cost is a real ceiling on model capability, and the benchmark below is what measures that ceiling
-instead of guessing at it.
+**The trade-off, stated plainly, not buried.** Patient narratives now leave the local machine and are
+sent to Google's API — the opposite of the rationale below. This is judged acceptable *here* because the
+TREC 2021/2022 topics are public de-identified benchmark narratives, not real patient data. **This
+decision must be revisited, not silently inherited, before it is extended to Phase 8 or Phase 9** (which
+process the same kind of text) or before any deployment against real patient input — at that point the
+local-only argument regains its original force. `src/extraction/ollama.py` was deleted outright
+(2026-08-30, user's explicit call — Ollama is no longer a maintained fallback in this repo). Reverting
+to a local backend means restoring it from git history (`git log --all --follow -- src/extraction/ollama.py`)
+or rewriting it against `gemini.py`'s `chat_json()` interface, not a one-line import swap anymore.
+
+**Two things learned empirically while wiring this up, worth recording so they aren't re-discovered:**
+
+1. **The model named in an approved plan can stop existing between planning and execution.**
+   `gemini-2.5-flash` (the original choice) returned `404 ... no longer available to new users` when
+   actually called (August 2026) — Google's own error pointed at `gemini-3.6-flash`, which was then
+   verified empirically (schema round-trip, negation handling, grounding) before being adopted. Verify
+   model availability by calling it, not by trusting a name written down earlier.
+2. **A round-robin of 3 keys does not multiply throughput if the keys share a quota pool.** The observed
+   429 (`generate_content_free_tier_requests`, limit 5/minute) was hit and exhausted across all 3 keys
+   within the same call — strong evidence the 3 keys sit under one Google Cloud project's free-tier quota,
+   not three independent ones. Round-robin still has value (key redundancy, spreading load if the keys
+   *are* ever split across projects) but should not be assumed to give 3× throughput. `gemini.py` honors
+   the `retryDelay` Gemini's own 429 response returns rather than retrying immediately — a fixed short
+   sleep would either under-wait (still 429) or over-wait (real capacity sitting idle).
+
+### Original rationale (kept for context — no longer the operative decision for Phase 4)
+
+Every generative call in this project (Phases 4, 8, 9) was designed to run on local Ollama. For
+patient-to-trial matching this was **the medically defensible design, not a budget compromise**: the
+input is a clinical narrative, and a system where patient text never leaves the machine is what a
+hospital could actually deploy. This reasoning still applies directly to Phase 8/9 until explicitly
+revisited there.
+
+The cost was a real ceiling on model capability, and the benchmark below is what measured that ceiling
+instead of guessing at it — **historical context now**, since Gemini's selection for Phase 4 was a direct
+decision rather than a result of this benchmark methodology (worth naming as a methodology deviation).
 
 ### Hardware constraints (measured, not estimated)
 
@@ -62,6 +98,11 @@ instead of guessing at it.
 | Narratives | 125 topics, mean 135 words, max 218 — fits every candidate with no truncation |
 
 ### Model roster — six candidates, 75 narratives each
+
+**Historical — designed for the local-only decision above, superseded before it was run.** Phase 4's
+actual backend (Gemini, see the reversed decision above) was a direct choice, not the output of this
+benchmark. Kept here because it's the right methodology *if* Ollama becomes the backend again (e.g. for
+Phase 8/9, where local-only still applies).
 
 Model choice is an experiment, not a guess. 6 × 75 = **450 calls**, cheap enough that the table is
 simply run rather than argued about.
@@ -101,12 +142,52 @@ and the write-up should say so rather than imply otherwise.
 **Known gap:** the schema sketch above names a `stage` field; the implemented schema does not have one.
 Staging is load-bearing for oncology trials and should be added as a scalar field before the full run.
 
-## Status: BUILT, NOT YET BENCHMARKED
+## Status: COMPLETE (2026-08-30)
 
-`src/extraction/` — `schema.py` (JSON Schema + prompt), `ollama.py` (HTTP to localhost, no new
-dependency — `requests` ships with pyserini), `verify.py` (mechanical checks + gold labels),
-`extract.py` (CLI + cache keyed on `prompt_hash`), `query.py` (profile → BM25 query, three variants).
-883 lines, running end to end. The 6-model benchmark has **not** been run yet.
+Full write-up in Vietnamese: [`docs/phase4-tong-ket.md`](../docs/phase4-tong-ket.md).
+
+`src/extraction/` — `schema.py` (JSON Schema + prompt + batch variants), `gemini.py` (round-robin API
+client), `verify.py` (mechanical checks + gold labels), `extract.py` (CLI + cache keyed on
+`prompt_hash`, batches 5 patients/call), `query.py` (profile → BM25 query, three variants, HyDE
+batched + disk-cached, `--hyde-model` separable from `--model`). All 75 dev-set profiles extracted,
+**all three query runs recorded** — `results/bm25_{prof,prof_narr,hyde}.dev.json`.
+
+**Headline result.** `prof_narr` is the best lexical query yet (official nDCG@10 0.4528 vs 0.3859,
+p=0.0001). But normalizing contamination by judged coverage shows **all three** extraction-based
+variants sit *above* the raw-narrative baseline (0.427 / 0.396 / 0.399 vs 0.335) — the Phase 3 finding
+reproduced at the query layer, on an independent axis. `hyde` is **undetermined, not refuted**: best
+ranking among judged documents (condensed nDCG@10 0.3876, bpref 0.2609 — highest of all four runs) but
+judged@10 of only 0.4813, so this collection cannot separate "finds what the pool missed" from
+"topic drift into unjudged trials".
+
+**The 6-model *Ollama* roster was superseded, but the comparison it called for was run — in cloud
+form.** The original roster chose among local models under an 8 GB VRAM ceiling; that deployment
+decision was reversed mid-phase, so the roster no longer applied. It was replaced by a 3-model Gemini
+comparison over all 75 dev topics (identical prompt, schema, and `--batch-size 5` — only the model
+varies), scored by the same `verify.py` measures. Full table in
+[`docs/phase4-tong-ket.md` §6.5](../docs/phase4-tong-ket.md).
+
+| model | schema | ground | age | sex | cover | neg (26 real) | s/call | Phase 8 |
+|---|---|---|---|---|---|---|---|---|
+| `gemini-3.6-flash` | 100% | 99.9% | 100% | 100% | **16.9** | **92%** | 3.87s | 29.1h |
+| **`gemini-3.5-flash-lite`** ← selected | 100% | 99.3% | 100% | 100% | 13.0 | 58% | **1.36s** | **10.2h** |
+| `gemini-3.1-flash-lite` | 100% | 98.7% | *93.3%* ❌ | *93.2%* ❌ | 8.9 | 50% | 1.33s | 10.0h |
+
+**`gemini-3.5-flash-lite` is the selected backend** (`gemini.MODEL`) — chosen for its independent
+per-model quota and 2.8× speed, which are what make Phase 8's 27,045 calls feasible at all. This is a
+**deliberate quality trade-off, not a claim the models are equivalent**: its negation recall is 58%
+against 3.6-flash's 92%, measured over the 26 dev topics carrying a real negation. Retrieval is
+unaffected (§7.4 — no significant difference on any of the three query variants, because negated terms
+are deliberately excluded from queries anyway), so **the cost lands entirely on Phase 8**, where
+`negated` is a required input for concluding `satisfied` on an exclusion criterion. Phase 8 must
+measure this directly rather than inherit Phase 4's verdict; `data/profiles/2021.gemini-3.6-flash.json`
+is retained so reverting costs no re-extraction.
+
+Two findings worth carrying: grounding barely separates the models (99.9 / 99.3 / 98.7) because
+**extracting less makes grounding easier** — `cover` and `neg` are the discriminating columns. And
+quality is **not monotonic in model size**: on the `2021_14` fabrication trap both Lite models cited
+`"She"` (valid evidence for the patient's sex) where `3.6-flash` cited `"Daughter"` (invalid — having a
+daughter does not establish sex).
 
 **Free gold labels, validated before use.** Age and sex sit in the first sentence of a narrative and
 regex recovers them precisely: **age 75/75, sex 74/75** on the dev topics. The single miss is

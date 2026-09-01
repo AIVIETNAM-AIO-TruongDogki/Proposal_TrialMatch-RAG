@@ -30,7 +30,33 @@ strong here precisely because biomarkers and drug names are exact tokens.
 **Reading.** BGE-M3 [M1]; MedCPT [M2]; Trial2Vec [M3] for trial-specific document representation. Full
 citations in [reading-list.md](reading-list.md).
 
-## Status: MODELS DOWNLOADED, CODE NOT WRITTEN
+## Status: BENCHMARK COMPLETE — full-corpus encoding pending
+
+All 8 subsample runs are scored (3 encoders × `base`/`crit`, plus `fields`/`crit_fields` for the
+winner). Full record with significance tests: [`docs/decisions/phase5-dense.md`](../docs/decisions/phase5-dense.md).
+
+| # | Exit criterion | Status |
+|---|---|---|
+| 1 | `--self-test` green before any encoding | ✅ all four encoders |
+| 2 | 3 × 2 table, all metric families + union-recall + s/doc | ✅ 8 rows, both metric families, contamination normalized by `judged@k` |
+| 3 | *Do criteria help or hurt dense?* | ✅ **Hurt** — recall@1000 −0.043 / −0.049 / −0.174, all p=0.0000. Inverts the lexical finding |
+| 4 | *Does biomedical beat general?* | ✅ **No** — MedCPT 0.1825 loses to bge-m3, qwen3 *and* BM25 |
+| 5 | Winner encoded over full corpus, time + index size recorded | ⏳ pending (~212 min) |
+| 6 | Dense losing to BM25 is a legitimate finding | n/a — dense won on the subsample (+0.1253, p=0.0003); the valid comparison is still the full-corpus run |
+
+**Selected:** `Qwen/Qwen3-Embedding-0.6B`, variant `base`, word chunking 320/40, exact matmul search.
+Union-recall — the pre-registered decision column — actually picked `fields` (0.8743 vs 0.8697;
+recall@1000 +0.0070, p=0.0016). `base` was chosen anyway on cost grounds; **the deviation is recorded**
+in the decision log rather than absorbed silently.
+
+**A hypothesis was raised and refuted**, not quietly dropped: `crit_fields` was predicted to show a
+*positive* interaction (repetition segregating boilerplate criteria into their own chunk, which
+max-pooling could then ignore). Measured interaction is **−0.0072**. Both the prediction and its
+refutation are in the decision log.
+
+### Original plan (kept for the record)
+
+## Status at planning time: MODELS DOWNLOADED, CODE NOT WRITTEN
 
 All candidates are on disk (9.4 GB in the HF cache), plus the Phase 7 rerankers — pulled in one pass
 because network access here has been intermittent. `sentence-transformers` 6.0.0 installed with no
