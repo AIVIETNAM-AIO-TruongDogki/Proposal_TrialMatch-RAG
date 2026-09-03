@@ -1,0 +1,3 @@
+{profile_summary}
+
+Write the trial description as JSON {{"text": "..."}}.

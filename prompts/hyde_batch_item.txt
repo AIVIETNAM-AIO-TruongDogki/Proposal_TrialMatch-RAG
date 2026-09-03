@@ -1,0 +1,3 @@
+--- Patient {index} ---
+
+{profile_summary}

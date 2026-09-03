@@ -1,0 +1,5 @@
+You will receive ALL criteria of one trial in this single request, each labeled with its own index number. Decide each criterion independently and return one entry per criterion.
+
+Do not let a decision about one criterion change your decision about another. Judge each one only against the patient narrative.
+
+Return a JSON object with a single field "decisions": an array with exactly one entry per criterion given, each carrying its own "criterion_idx" field matching the label below.

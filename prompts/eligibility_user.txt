@@ -1,0 +1,7 @@
+PATIENT NARRATIVE:
+{narrative}
+
+TRIAL {nct_id} — {section} criterion:
+{criterion}
+
+Decide the label for this one criterion.

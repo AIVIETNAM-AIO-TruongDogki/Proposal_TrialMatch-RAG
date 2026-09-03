@@ -1,0 +1,6 @@
+PATIENT NARRATIVE:
+{narrative}
+
+TRIAL {nct_id} — {n} criteria to decide:
+
+{criteria}
