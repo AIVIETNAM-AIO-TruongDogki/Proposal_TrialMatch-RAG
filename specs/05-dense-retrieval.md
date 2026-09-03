@@ -30,10 +30,11 @@ strong here precisely because biomarkers and drug names are exact tokens.
 **Reading.** BGE-M3 [M1]; MedCPT [M2]; Trial2Vec [M3] for trial-specific document representation. Full
 citations in [reading-list.md](reading-list.md).
 
-## Status: BENCHMARK COMPLETE — full-corpus encoding pending
+## Status: COMPLETE
 
 All 8 subsample runs are scored (3 encoders × `base`/`crit`, plus `fields`/`crit_fields` for the
-winner). Full record with significance tests: [`docs/decisions/phase5-dense.md`](../docs/decisions/phase5-dense.md).
+winner), and the winner is encoded over the full 375,580-trial corpus and scored against Phase 3's
+`bm25_best`. Full record with significance tests: [`docs/decisions/phase5-dense.md`](../docs/decisions/phase5-dense.md).
 
 | # | Exit criterion | Status |
 |---|---|---|
@@ -41,8 +42,18 @@ winner). Full record with significance tests: [`docs/decisions/phase5-dense.md`]
 | 2 | 3 × 2 table, all metric families + union-recall + s/doc | ✅ 8 rows, both metric families, contamination normalized by `judged@k` |
 | 3 | *Do criteria help or hurt dense?* | ✅ **Hurt** — recall@1000 −0.043 / −0.049 / −0.174, all p=0.0000. Inverts the lexical finding |
 | 4 | *Does biomedical beat general?* | ✅ **No** — MedCPT 0.1825 loses to bge-m3, qwen3 *and* BM25 |
-| 5 | Winner encoded over full corpus, time + index size recorded | ⏳ pending (~212 min) |
-| 6 | Dense losing to BM25 is a legitimate finding | n/a — dense won on the subsample (+0.1253, p=0.0003); the valid comparison is still the full-corpus run |
+| 5 | Winner encoded over full corpus, time + index size recorded | ✅ 375,580 docs, 395,147 chunks, 816 MB, `indexes/dense/qwen3.base.npz` |
+| 6 | Dense losing to BM25 is a legitimate finding | ✅ **Applies at full scale.** Dense wins recall@1000 decisively (0.6050 vs 0.4176, p=0.0000) but the nDCG@10 margins that were significant on the subsample (+0.1253, p=0.0003) shrink to non-significant at full corpus (+0.0519, p=0.1154) — BM25's exact-token matching regains ground once the distractor pool is the real 375,580 trials rather than a curated 46,162 |
+
+**Full-corpus result (the Phase 5 exit number):**
+
+| | off@10 | elig@10 | **rec@1k** | contam raw | judged | normalized |
+|---|---|---|---|---|---|---|
+| BM25 rung 1 (`bm25_best`) | 0.3859 | 0.2399 | 0.4176 | 0.2840 | 0.8467 | 0.3354 |
+| **Dense rung 2 (qwen3 `base`)** | 0.4245 | 0.2918 | **0.6050** | 0.2547 | 0.6307 | 0.4038 |
+
+recall@1000 is the column that decides Phase 6: dense surfaces 45% more eligible trials into the
+top-1000 than BM25, which is what fusion consumes regardless of the nDCG tie.
 
 **Selected:** `Qwen/Qwen3-Embedding-0.6B`, variant `base`, word chunking 320/40, exact matmul search.
 Union-recall — the pre-registered decision column — actually picked `fields` (0.8743 vs 0.8697;

@@ -43,6 +43,7 @@ lam sang, an toan duoi tran 512 cua MedCPT.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import sys
@@ -290,9 +291,17 @@ def self_test(device: str = "cuda") -> bool:
 
 # --- Ma hoa mot tap JSONL ----------------------------------------------------
 
-def read_jsonl_dir(d: str, keep: set[str] | None = None) -> tuple[list[str], list[str]]:
+def read_jsonl_dir(d: str, keep: set[str] | None = None,
+                   shard: int | None = None) -> tuple[list[str], list[str]]:
+    """shard=N chi doc docs{N:02d}.jsonl. Xem `shard_path`/`merge_shards`."""
     ids, texts = [], []
-    for f in sorted(os.listdir(d)):
+    files = sorted(f for f in os.listdir(d) if f.endswith(".jsonl"))
+    if shard is not None:
+        want = f"docs{shard:02d}.jsonl"
+        if want not in files:
+            raise SystemExit(f"Khong co {d}/{want} (co: {', '.join(files)})")
+        files = [want]
+    for f in files:
         if not f.endswith(".jsonl"):
             continue
         with open(os.path.join(d, f), encoding="utf-8") as fh:
@@ -333,6 +342,60 @@ def encode_docs(enc, ids: list[str], texts: list[str], bs: int | None = None
     return V, np.asarray(owner, dtype=np.int32)
 
 
+# --- Ma hoa theo shard, co checkpoint ----------------------------------------
+#
+# VI SAO CAN: ma hoa toan corpus mat ~3,5 gio va `encode_docs` chi ghi dia MOT
+# LAN o cuoi — mot lan chet la mat ca lượt. Ngoai ra no giu toan bo vector fp32
+# trong RAM roi `np.concatenate` tao ban sao thu hai: 406k chunk x 1024 x 4 byte
+# = 1,66 GB x2, cong ban fp16 nua, dinh ~4,8 GB tren may chi con 8 GB kha dung.
+#
+# Chia theo shard giai quyet ca hai: dinh RAM xuong ~1 GB va moi shard duoc luu
+# ngay khi xong. `data/jsonl/*` von da chia san 4 shard 100.000 doc.
+
+def shard_path(out: str, shard: int) -> str:
+    base = out[:-4] if out.endswith(".npz") else out
+    return f"{base}.shard{shard:02d}.npz"
+
+
+def merge_shards(out: str, model: str, keep_shards: bool = False) -> int:
+    """Gop cac file shard thanh mot .npz duy nhat.
+
+    CHO DE SAI DUY NHAT: `owner` la chi so tai lieu CUC BO trong tung shard. Noi
+    thang se lam moi chunk cua shard 1..3 tro ve tai lieu cua shard 0 — khong nem
+    ngoai le, chi lam diem so sai theo kieu van trong hop ly. Phai cong don so
+    tai lieu cua cac shard truoc.
+    """
+    base = out[:-4] if out.endswith(".npz") else out
+    paths = sorted(glob.glob(f"{base}.shard*.npz"))
+    if not paths:
+        raise SystemExit(f"Khong tim thay shard nao khop {base}.shard*.npz")
+
+    ids_all: list[str] = []
+    vecs, owners = [], []
+    off = 0
+    for p in paths:
+        z = np.load(p, allow_pickle=True)
+        sid = list(z["ids"])
+        vecs.append(z["vecs"])
+        owners.append(z["owner"].astype(np.int64) + off)   # <- offset, khong noi thang
+        ids_all.extend(sid)
+        off += len(sid)
+        print(f"  {os.path.basename(p):40s} {len(sid):7,} doc  {z['vecs'].shape[0]:7,} chunk"
+              f"  offset -> {off:,}")
+
+    V = np.concatenate(vecs)
+    owner = np.concatenate(owners).astype(np.int32)
+    assert owner.max() == len(ids_all) - 1, (
+        f"owner.max()={owner.max()} nhung co {len(ids_all)} doc — offset sai")
+    assert len(owner) == V.shape[0], "so owner khong khop so chunk"
+    save(out, ids_all, V, owner, model)
+    if not keep_shards:
+        for p in paths:
+            os.remove(p)
+        print(f"  da xoa {len(paths)} file shard")
+    return 0
+
+
 def save(out: str, ids: list[str], V: np.ndarray, owner: np.ndarray, model: str) -> None:
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     np.savez(out, vecs=V, owner=owner, ids=np.array(ids, dtype=object),
@@ -351,7 +414,18 @@ def main() -> int:
                     help="file .txt moi dong mot nct_id — chi ma hoa cac id nay")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--batch", type=int, default=BATCH)
+    ap.add_argument("--shard", type=int, default=None,
+                    help="chi ma hoa docs{N:02d}.jsonl, ghi <out>.shardNN.npz")
+    ap.add_argument("--merge", action="store_true",
+                    help="gop <out>.shard*.npz thanh <out>")
+    ap.add_argument("--keep-shards", action="store_true",
+                    help="giu lai file shard sau khi gop")
     args = ap.parse_args()
+
+    if args.merge:
+        if not (args.model and args.out):
+            ap.error("--merge can --model va --out")
+        return merge_shards(args.out, MODELS[args.model], args.keep_shards)
 
     if args.self_test:
         print(f"Self-test {len(MODELS)} encoder (paraphrase phai gan hon unrelated):")
@@ -367,11 +441,17 @@ def main() -> int:
         keep = {l.strip() for l in open(args.keep, encoding="utf-8") if l.strip()}
         print(f"Loc theo {args.keep}: {len(keep):,} id")
 
-    ids, texts = read_jsonl_dir(args.input, keep)
-    print(f"{args.model}: {len(ids):,} doc tu {args.input}")
+    out = shard_path(args.out, args.shard) if args.shard is not None else args.out
+    if args.shard is not None and os.path.exists(out):
+        print(f"{out} da co — bo qua (xoa file neu muon ma hoa lai)")
+        return 0
+
+    ids, texts = read_jsonl_dir(args.input, keep, args.shard)
+    where = f"{args.input}" + (f" shard {args.shard}" if args.shard is not None else "")
+    print(f"{args.model}: {len(ids):,} doc tu {where}")
     enc = load_encoder(args.model, args.device)
     V, owner = encode_docs(enc, ids, texts, args.batch)
-    save(args.out, ids, V, owner, MODELS[args.model])
+    save(out, ids, V, owner, MODELS[args.model])
     return 0
 
 

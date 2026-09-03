@@ -122,25 +122,20 @@ def main() -> int:
     ap.add_argument("--out", default=None,
                     help="mac dinh: data/jsonl/base hoac data/jsonl/crit")
     ap.add_argument("--with-criteria", action="store_true",
-                    help="them criteria_raw vao van ban index")
-    ap.add_argument("--boost", type=int, default=1,
-                    help="lap lai title+conditions N lan (mac dinh 1 = khong boost)")
+                    help="them criteria_raw vao van ban index (ban de ablate)")
     ap.add_argument("--skip-verify", action="store_true")
     args = ap.parse_args()
 
-    # Ten thu muc suy tu cau hinh, de khong bao gio lan bien the voi nhau.
-    variant = ("crit" if args.with_criteria else "base") + \
-              (f"_x{args.boost}" if args.boost > 1 else "")
-    out = args.out or f"data/jsonl/{variant}"
+    out = args.out or ("data/jsonl/crit" if args.with_criteria else "data/jsonl/base")
     conn = open_db(args.db)
 
-    if not args.skip_verify and not args.with_criteria and args.boost == 1:
+    if not args.skip_verify and not args.with_criteria:
         if verify(conn) != 0:
             print("Dung lai: bulk query khong khop retrieval_text().", file=sys.stderr)
             return 1
 
     t0 = time.time()
-    n, empty = export(conn, out, args.with_criteria, args.boost)
+    n, empty = export(conn, out, args.with_criteria)
     size = sum(os.path.getsize(os.path.join(out, f)) for f in os.listdir(out))
     print(f"Da ghi {n:,} doc vao {out}/  ({size/1e9:.2f} GB, {time.time()-t0:.0f}s)")
     if empty:

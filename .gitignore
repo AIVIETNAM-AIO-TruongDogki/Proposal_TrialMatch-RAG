@@ -3,6 +3,10 @@ documents
 CLAUDE.md
 IMPLEMENTATION_PLAN.md
 
+.env
+
+results
+logs/
 # Du lieu dan xuat: parse tu rawdata, dung lai duoc bang code
 data/
 *.db
