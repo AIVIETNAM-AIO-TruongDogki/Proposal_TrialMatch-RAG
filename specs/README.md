@@ -24,6 +24,11 @@ Every phase file has the same six fields:
 | **Exit criterion** | A measurable condition. Do not start the next phase until it holds. |
 | **Reading** | Papers that make this phase easier. Full citations in [reading-list.md](reading-list.md). |
 
+> `docs/decisions/` is a **local-only** working record and is not published in this repository.
+> References to it throughout `specs/` and `src/` name where a decision was written down, not a
+> file you can open from a clone. The published record of every decision is the phase spec itself
+> plus the numbers in [`README.md`](../README.md).
+
 Two rules that make the plan work:
 
 1. **No phase is "done" because the code runs.** It is done when its exit criterion is measured and

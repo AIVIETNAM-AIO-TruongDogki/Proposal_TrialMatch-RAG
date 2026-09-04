@@ -26,7 +26,7 @@
 ## Status: COMPLETE
 
 Both criteria met on the full 375,580-trial corpus, dev 2021. Run: `runs/hybrid.dev.txt` (RRF,
-`w_lex=0.5`, k=60). Decision log: [`docs/decisions/phase6-fusion.md`](../docs/decisions/phase6-fusion.md).
+`w_lex=0.5`, k=60). Decision log: `docs/decisions/phase6-fusion.md`.
 
 | Rung | Configuration | elig nDCG@10 | Recall@1000 | contam@10 |
 |---|---|---|---|---|

@@ -50,7 +50,7 @@ and lexical-retrieval phases. For Phase 4 extraction it has been **explicitly re
 backend is now the **Google Gemini API** (`gemini-3.6-flash`), called through `src/extraction/gemini.py`
 with **round-robin rotation across 3 API keys** (one key per call, advancing regardless of success —
 spreads load across each key's own rate limit rather than only failing over on error). Full record in
-[`docs/decisions/phase4-gemini-backend.md`](../docs/decisions/phase4-gemini-backend.md).
+`docs/decisions/phase4-gemini-backend.md`.
 
 **The trade-off, stated plainly, not buried.** Patient narratives now leave the local machine and are
 sent to Google's API — the opposite of the rationale below. This is judged acceptable *here* because the
@@ -144,7 +144,7 @@ Staging is load-bearing for oncology trials and should be added as a scalar fiel
 
 ## Status: COMPLETE (2026-08-30)
 
-Full write-up in Vietnamese: [`docs/phase4-tong-ket.md`](../docs/phase4-tong-ket.md).
+Full write-up in Vietnamese: `docs/phase4-tong-ket.md`.
 
 `src/extraction/` — `schema.py` (JSON Schema + prompt + batch variants), `gemini.py` (round-robin API
 client), `verify.py` (mechanical checks + gold labels), `extract.py` (CLI + cache keyed on
@@ -165,7 +165,7 @@ form.** The original roster chose among local models under an 8 GB VRAM ceiling;
 decision was reversed mid-phase, so the roster no longer applied. It was replaced by a 3-model Gemini
 comparison over all 75 dev topics (identical prompt, schema, and `--batch-size 5` — only the model
 varies), scored by the same `verify.py` measures. Full table in
-[`docs/phase4-tong-ket.md` §6.5](../docs/phase4-tong-ket.md).
+`docs/phase4-tong-ket.md` §6.5.
 
 | model | schema | ground | age | sex | cover | neg (26 real) | s/call | Phase 8 |
 |---|---|---|---|---|---|---|---|---|

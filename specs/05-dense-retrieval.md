@@ -34,7 +34,7 @@ citations in [reading-list.md](reading-list.md).
 
 All 8 subsample runs are scored (3 encoders × `base`/`crit`, plus `fields`/`crit_fields` for the
 winner), and the winner is encoded over the full 375,580-trial corpus and scored against Phase 3's
-`bm25_best`. Full record with significance tests: [`docs/decisions/phase5-dense.md`](../docs/decisions/phase5-dense.md).
+`bm25_best`. Full record with significance tests: `docs/decisions/phase5-dense.md`.
 
 | # | Exit criterion | Status |
 |---|---|---|

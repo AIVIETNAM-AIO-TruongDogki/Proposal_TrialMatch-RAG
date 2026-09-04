@@ -25,7 +25,7 @@ significance test from [Phase 2](02-evaluation-harness.md).
 
 All three families were benchmarked on `runs/hybrid.dev.txt` (rung 3), depth 100, full corpus, dev 2021.
 **No reranker improved over rung 3. All three degraded official nDCG@10 significantly.**
-Decision log: [`docs/decisions/phase7-rerank.md`](../docs/decisions/phase7-rerank.md).
+Decision log: `docs/decisions/phase7-rerank.md`.
 
 | Model | family | elig@10 | official@10 | contam/judged | s/topic |
 |---|---|---|---|---|---|
