@@ -93,6 +93,8 @@ def main() -> int:
                     help="ablate ca ba luat gop canh nhau")
     ap.add_argument("--base-run", default="runs/bm25_best.dev.txt")
     ap.add_argument("--emit", default=None, help="ghi run da xep lai")
+    ap.add_argument("--demote-disqualified", action="store_true",
+                    help="ha trial bi loai xuong DUOI trial chua suy luan (Phase 11 nhom A)")
     ap.add_argument("--vs", default="results/bm25_best.dev.json")
     ap.add_argument("--out-dir", default=reason.OUT_DIR)
     args = ap.parse_args()
@@ -154,7 +156,8 @@ def main() -> int:
         print(f"\n(Chua co ablation ep buoc: chay --forced de sinh {forced_path})")
 
     if args.emit:
-        r = aggregate.rerank_by_eligibility(base, dec, args.rule)
+        r = aggregate.rerank_by_eligibility(
+            base, dec, args.rule, demote_disqualified=args.demote_disqualified)
         run_io.write_run(args.emit, r, f"elig_{args.rule}")
         a_new = metrics.aggregate(metrics.evaluate(r, qrels))
         a_old = metrics.aggregate(metrics.evaluate(base, qrels))

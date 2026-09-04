@@ -93,11 +93,19 @@ def trial_score(decisions: list[dict], rule: str = "strict",
 
 
 def rerank_by_eligibility(base_run: dict, decisions_by: dict, rule: str = "strict",
-                          keep_unjudged: bool = True) -> dict:
+                          keep_unjudged: bool = True,
+                          demote_disqualified: bool = False) -> dict:
     """Re-rank a run by eligibility score, keeping retrieval score as tie-break.
 
     Trials outside the reasoned top-N keep their original relative order rather
     than being dropped — dropping would artificially deflate recall and flatter rung 5.
+
+    `demote_disqualified` moves trials the reasoner rejected BELOW the unreasoned
+    band instead of leaving them at the bottom of the reasoned one. Off by default
+    so it stays an ablation, like `infer_section`: Phase 11's error analysis found
+    31% of residual top-10 contamination is trials that were correctly disqualified
+    and stayed visible only because every reasoned trial outranks every unreasoned
+    one. They are still demoted, never dropped, for the recall reason above.
     """
     out: dict[str, dict[str, float]] = {}
     for tid, docs in base_run.items():
@@ -106,12 +114,16 @@ def rerank_by_eligibility(base_run: dict, decisions_by: dict, rule: str = "stric
         new: dict[str, float] = {}
         for i, (nct, ret_score) in enumerate(ranked):
             key = (tid, nct)
+            tie = (n - i) / (n + 1)
             if key in decisions_by:
                 elig = trial_score(decisions_by[key], rule)
-                # A reasoned trial always outranks an unreasoned one; retrieval
-                # order breaks ties within each group.
-                new[nct] = 1000.0 + elig * 100.0 + (n - i) / (n + 1)
+                if demote_disqualified and elig == DISQUALIFIED:
+                    new[nct] = -1000.0 + tie
+                else:
+                    # A reasoned trial always outranks an unreasoned one; retrieval
+                    # order breaks ties within each group.
+                    new[nct] = 1000.0 + elig * 100.0 + tie
             elif keep_unjudged:
-                new[nct] = (n - i) / (n + 1)
+                new[nct] = tie
         out[tid] = new
     return out

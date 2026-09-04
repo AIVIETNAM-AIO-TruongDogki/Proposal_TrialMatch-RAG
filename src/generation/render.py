@@ -47,6 +47,21 @@ def criterion_row(d: dict) -> dict:
     }
 
 
+def headline(n_criteria: int, n_satisfied: int, n_violated: int) -> str:
+    """Verdict WITH the verified fraction — never a verdict on its own.
+
+    Measured on the Phase 9 dev sample: a trial where 9 of 71 criteria were
+    verified still summarised as "potentially eligible", which reads as more
+    confidence than the system has. Under the three-state design that verdict is
+    correct (silence never disqualifies), so nothing here is a wrong label — the
+    overstatement lives entirely in the wording. Carrying the count is the only
+    fix that survives an automated check, since there is no error to detect.
+    """
+    verdict = "Likely ineligible" if n_violated else "Potentially eligible"
+    return (f"{verdict} — {n_satisfied + n_violated} of {n_criteria} criteria "
+            f"verified — requires clinician review.")
+
+
 def trial_card(trial: dict, decisions: list[dict], score: float) -> dict:
     """One ranked trial card, ready to JSON-serialize over SSE.
 
@@ -63,6 +78,7 @@ def trial_card(trial: dict, decisions: list[dict], score: float) -> dict:
         "phase": trial.get("phase") or "",
         "status": trial.get("status") or "",
         "score": score,
+        "headline": headline(len(rows), n_sat, n_vio),
         "n_criteria": len(rows),
         "n_satisfied": n_sat,
         "n_violated": n_vio,
