@@ -39,6 +39,7 @@ import json
 import os
 import time
 
+import httpx
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
@@ -136,6 +137,18 @@ def chat_json(model: str, system: str, user: str, schema: dict) -> tuple[dict | 
                 time.sleep(_retry_delay_seconds(e))
                 continue  # vong xoay da tu chuyen sang key ke tiep
             raise GeminiError(f"{model}: {e}") from e
+        except httpx.TransportError as e:
+            # Loi tang MANG (mat DNS, mat ket noi, timeout) — xay ra TRUOC KHI
+            # toi duoc server Google, nen KHONG phai errors.APIError va SDK
+            # khong boc lai no. Quan sat thuc te (03-04/09/2026): mat DNS
+            # thoang qua giua dem lam Phase 8 --forced CHET HAN — ngoai le nem
+            # thang ra ngoai ham nay, khong bi GeminiError bat, lam ca tien
+            # trinh crash cho toi khi nguoi dung tu phat hien. Coi day la TAM
+            # THOI giong 429/5xx: khong co retryDelay de doc (khong co response
+            # nao ca) nen cho mot khoang co dinh roi thu key ke tiep.
+            last_err = e
+            time.sleep(2.0)
+            continue
         elapsed = time.time() - t0
 
         usage = resp.usage_metadata

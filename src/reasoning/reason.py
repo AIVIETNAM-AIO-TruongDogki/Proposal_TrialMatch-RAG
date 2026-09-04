@@ -19,7 +19,8 @@ QUY MO — DOC TRUOC KHI CHAY
 ----------------------------
 75 topic x top-20 x 18,0 tieu chi/trial = 27.045 lan goi (do that tren
 runs/bm25_best.dev.txt, khong phai uoc luong). Han ngach free tier do duoc la
-20 request/ngay/model. Ke ca duong `trial` 1.500 lan goi cung la 75 NGAY.
+20 request/ngay/model TREN 3.6-flash. Model dang dung (3.5-flash-lite) co han
+ngach rieng va cao hon — xem `--estimate`.
 `--estimate` in ra so lan goi va dung lai, khong goi gi ca.
 
 CACHE
@@ -52,6 +53,11 @@ TOP_N = 20
 # tieu chi (toi da 76), nen chia nho la BAT BUOC, khong phai toi uu.
 MAX_CRIT_PER_CALL = 30
 
+# So loi LIEN TIEP truoc khi coi la "nguon da can" chu khong phai truc trac le.
+# 5 la du: mot 429 rai rac thi khoa ke tiep trong vong xoay se nhan viec, nen
+# 5 cap lien tiep hong ca 3 khoa co nghia la ca ba du an deu het han ngach.
+MAX_CONSECUTIVE_FAILS = 5
+
 
 def cache_path(year: int, model: str, mode: str, forced: bool,
                out_dir: str = OUT_DIR) -> str:
@@ -60,12 +66,24 @@ def cache_path(year: int, model: str, mode: str, forced: bool,
 
 
 def load_cache(path: str, ph: str) -> dict:
+    """Cache la tai san DAT NHAT trong Phase 8 — 1.461 loi goi = mot ngay han ngach.
+
+    Cache HONG khong duoc coi nhu cache TRONG. Ban truoc nuot JSONDecodeError roi
+    tra {}, nghia la mot file bi cat cut (kill giua luc ghi, day o dia, may sap
+    nguon) se lam lan chay ke tiep am tham goi lai TU DAU — dot mot ngay han ngach
+    ma khong mot dong canh bao. Gio no dung han va bao cho nguoi dung biet ban
+    `.bak` nam o dau.
+    """
     if not os.path.exists(path):
         return {}
     try:
         blob = json.load(open(path, encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
+    except json.JSONDecodeError as e:
+        bak = path + ".bak"
+        raise SystemExit(
+            f"Cache HONG: {path}\n  {e}\n"
+            f"  KHONG tu dong chay lai — lam vay se am tham goi lai tu dau.\n"
+            f"  Neu co {bak} thi khoi phuc no; neu that su muon bo, xoa file di.")
     if blob.get("prompt_hash") != ph:
         print(f"  prompt/schema da doi ({blob.get('prompt_hash')} -> {ph}); bo cache cu")
         return {}
@@ -73,9 +91,24 @@ def load_cache(path: str, ph: str) -> dict:
 
 
 def save_cache(path: str, ph: str, model: str, mode: str, recs: dict) -> None:
+    """Ghi NGUYEN TU: file tam + os.replace, giu mot ban `.bak` cua lan truoc.
+
+    `json.dump` thang vao file that mat vai giay cho 7 MB. Bi kill dung trong
+    khoang do — dieu VUA suyt xay ra khi doi khoa API — thi file that bi cat cut
+    va toan bo cong cua mot ngay han ngach nam trong mot file khong doc duoc.
+    os.replace la thao tac nguyen tu tren cung he thong tep: hoac file cu con
+    nguyen, hoac file moi day du, khong bao gio co trang thai o giua.
+    """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    json.dump({"prompt_hash": ph, "model": model, "mode": mode, "records": recs},
-              open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"prompt_hash": ph, "model": model, "mode": mode,
+                   "records": recs}, fh, ensure_ascii=False, indent=1)
+        fh.flush()
+        os.fsync(fh.fileno())   # du lieu xuong dia truoc khi doi ten
+    if os.path.exists(path):
+        os.replace(path, path + ".bak")
+    os.replace(tmp, path)
 
 
 def plan_work(run: dict, topics: dict, conn, top_n: int,
@@ -214,8 +247,23 @@ def main() -> int:
           f"({n_crit/max(len(work),1):.1f}/trial)")
     print(f"Che do '{args.mode}' -> {calls:,} lan goi API")
     if args.estimate:
-        print(f"\nHan ngach do duoc: 20 request/ngay/model.")
-        print(f"  {calls:,} lan goi = {calls/20:.0f} NGAY tren free tier mot model.")
+        # Han ngach theo TUNG MODEL. Con so 20/ngay do duoc bang 429 that — nhung
+        # TREN `gemini-3.6-flash`, khong phai tren model dang dung. Bang chung
+        # nguoc: 30/08/2026 `gemini-3.5-flash-lite` phuc vu 15 lan goi trich xuat
+        # luc 23:05 va 15 lan goi HyDE luc 23:14 — 30 lan trong mot ngay, tran
+        # 20/ngay se chan giua chung. Xem specs/risk-register.md.
+        # Han ngach nhan len theo SO DU AN, khong phai so khoa: ba khoa cung mot
+        # du an dung chung mot tran. Xac nhan 03/09/2026: ba khoa trong .env
+        # thuoc ba du an rieng, nen tran that la 3x.
+        nk = max(len(gemini.KEYS), 1)
+        print(f"\nHan ngach — theo TUNG model, khong suy rong duoc "
+              f"({nk} khoa = {nk} du an rieng):")
+        for lab, cap in (("gemini-3.6-flash (do bang 429)", 20),
+                         ("gemini-3.5-flash-lite (>30 do duoc; bao cao 500)", 500)):
+            tong = cap * nk
+            print(f"  {lab:48s} {calls/tong:5.1f} ngay  ({tong:,}/ngay)")
+        print(f"\nThoi gian API that: ~{calls * 5.1 / 3600:.1f} gio "
+              f"(5,1 s/goi do tren smoke test) — phan con lai la CHO han ngach.")
         print("Dung lai (--estimate). Bo co nay de chay that.")
         return 0
 
@@ -231,6 +279,7 @@ def main() -> int:
 
     rejections: dict[str, int] = {}
     n_dec = 0
+    fails = 0
     t0 = time.time()
     for i, (tid, nct, crit) in enumerate(todo, 1):
         try:
@@ -244,9 +293,22 @@ def main() -> int:
                                                 rejections)
         except gemini.GeminiError as e:
             # TAM THOI — khong ghi cache, lan chay sau tu thu lai.
+            fails += 1
             print(f"  [{i}/{len(todo)}] {tid}/{nct} LOI TAM THOI: {e}",
                   file=sys.stderr)
+            # CAU DAO. Het han ngach NGAY thi moi cap con lai deu se hong y het,
+            # nhung `chat_json` van thu du 3 khoa va ngu toi 20s moi khoa truoc
+            # khi nem — tuc ~60s doi mot cap, nhan voi hang nghin cap con lai la
+            # nhieu gio goi API vo ich. Loi RAI RAC thi bo qua nhu cu; loi LIEN
+            # TIEP nghia la nguon da can, va dung viec dung cach la ghi cache roi
+            # thoat — lan chay sau tu resume tu cache.
+            if fails >= MAX_CONSECUTIVE_FAILS:
+                print(f"\n!! {fails} loi LIEN TIEP — nhieu kha nang het han ngach "
+                      f"ngay. Dung lai va ghi cache; chay lai lenh nay se tiep tuc "
+                      f"tu {len(recs):,} cap da xong.", file=sys.stderr)
+                break
             continue
+        fails = 0
 
         recs[f"{tid}|{nct}"] = {"decisions": kept, "n_criteria": len(crit),
                                 "seconds": meta["seconds"],

@@ -106,7 +106,11 @@ class _QwenReranker:
             enc = self.tok(prompts, truncation=True, padding=True,
                            max_length=self.MAX_LEN, return_tensors="pt").to(self.device)
             with self.torch.no_grad():
-                logits = self.mod(**enc).logits[:, -1, :].float()
+                # logits_to_keep=1 — CHI tinh logits cho vi tri cuoi. Khong co no,
+                # transformers tinh logits cho CA chuoi roi ta vut het tru vi tri
+                # cuoi: 16 x 2048 x 151.669 x 2 byte = 9,94 GB thay vi 4,9 MB.
+                # Day la nguyen nhan OOM that su, khong phai thieu VRAM.
+                logits = self.mod(**enc, logits_to_keep=1).logits[:, -1, :].float()
             lp = self.torch.nn.functional.log_softmax(logits, dim=-1)
             out += (lp[:, self.yes] - lp[:, self.no]).cpu().tolist()
         return out

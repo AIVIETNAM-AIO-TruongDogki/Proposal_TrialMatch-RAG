@@ -41,8 +41,25 @@ from src.eval import data, metrics, run_io, sig
 from src.reasoning import aggregate, reason, schema
 
 
-def load_decisions(path: str) -> dict:
+def load_decisions(path: str, want_hash: str | None = None) -> dict:
+    """Doc mot file quyet dinh. `want_hash` KHONG phai tuy chon khi so sanh.
+
+    `reason.load_cache` kiem `prompt_hash` truoc khi dung lai cache, nhung ham
+    nay truoc day thi khong — nen mot file cu con sot lai van duoc nap va dem
+    ra so sanh nhu that. Do la dieu vua xay ra: ablation lua chon ep buoc doc
+    phai ban 30/08 (hash ceb71ba6c6cb, DUY NHAT 1 ban ghi, prompt cu) va in ra
+    "hai trang thai F1=0.0000 acc=1.0000" — mot cap so vo nghia ma van trong
+    nhu ket qua. So sanh hai file sinh boi hai prompt khac nhau khong do duoc
+    gi ca.
+    """
     blob = json.load(open(path, encoding="utf-8"))
+    got = blob.get("prompt_hash")
+    if want_hash and got != want_hash:
+        raise SystemExit(
+            f"Khong the so sanh: {path}\n"
+            f"  prompt_hash = {got}, can {want_hash}.\n"
+            f"  File nay sinh boi prompt/schema KHAC — dem ra so sanh la do hai\n"
+            f"  thi nghiem khac nhau. Chay lai no voi prompt hien tai, hoac xoa di.")
     out = {}
     for key, rec in blob["records"].items():
         tid, nct = key.split("|", 1)
@@ -137,7 +154,15 @@ def main() -> int:
     print("chi co nhan muc trial, khong tach duoc hai thu (specs/08 duong (a)).")
 
     if os.path.exists(forced_path):
-        fdec, _ = load_decisions(forced_path)
+        # KHONG so voi blob['prompt_hash'] cua file KHONG-ep-buoc — hai file co
+        # prompt_hash KHAC NHAU CO CHU DICH (schema ep buoc bo nhan `unverifiable`
+        # khoi enum, xem schema.decision_schema(forced=True)). Phai tinh rieng
+        # hash MONG DOI cua chinh file ep buoc.
+        want_forced_hash = schema.prompt_hash(True, args.mode == "trial")
+        fdec, _ = load_decisions(forced_path, want_forced_hash)
+        if len(fdec) < len(dec):
+            print(f"\n(Ablation ep buoc CHUA DAY DU: {len(fdec):,}/{len(dec):,} cap "
+                  f"— chay --forced cho het truoc khi doc con so nay)")
         fe = trial_level_eval(fdec, qrels, args.rule)
         e = trial_level_eval(dec, qrels, args.rule)
         print(f"\nABLATION LUA CHON EP BUOC (kiem chung invariant 1)")
