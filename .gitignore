@@ -10,10 +10,22 @@ paper/
 
 .env
 
-results
+results/*
 logs/
+# Ngoai le: ket qua giai doan 11 tren TAP TEST 2022. Tap test chi duoc cham mot
+# lan, va temperature=0 khong dam bao tat dinh, nen chay lai KHONG cho lai dung
+# nhung con so nay. Chung khong tai tao duoc -> phai duoc version control.
+!results/rung?_*.json
+!results/_sig_ladder.2022.json
+!results/_error_taxonomy.2022.json
+
 # Du lieu dan xuat: parse tu rawdata, dung lai duoc bang code
-data/
+data/*
+# Ngoai le tuong tu: cache quyet dinh muc tieu chi, ~1.000 lenh goi API va la
+# co so cua moi con so o giai doan 8/11. Cac file .bak la ban sao, van bo qua.
+!data/reasoning/
+data/reasoning/*.bak
+data/reasoning/_superseded/
 *.db
 *.sqlite
 *.sqlite3

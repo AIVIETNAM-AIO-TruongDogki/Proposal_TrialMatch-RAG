@@ -1,0 +1,835 @@
+{
+  "year": 2022,
+  "run": "runs/elig_strict.test.txt",
+  "rung": "rung5_eligibility",
+  "definition": "Trials qrels label EXCLUDED that rung 5 still ranked in the top 10.",
+  "n_cases": 80,
+  "n_topics_affected": 33,
+  "buckets": {
+    "A_ranking_artifact": "Reasoner DID disqualify the trial (strict score 0.0); rerank_by_eligibility still ranks every reasoned trial above all unreasoned ones, so it stays in the top 10. Not a reasoning error.",
+    "B1_irrelevant_quote": "An exclusion criterion was cleared (satisfied) citing a verbatim span with no content-word overlap with the criterion. The quote is real, so the grounding check passes; it just does not support the claim.",
+    "B2_global_negation_overreach": "An exclusion criterion was cleared citing a sweeping negative about the patient. Real information, but it cannot settle criteria defined by a lab value, a date window, or a specific procedure.",
+    "C_unverifiable_dominated": "No exclusion was wrongly cleared; the narrative is simply silent and >=60% of decisions are unverifiable. Under the strict rule silence never disqualifies. A consequence of design invariant 2, not a model error.",
+    "D_other": "Residual — no unsupported clearance and not unverifiable-dominated."
+  },
+  "counts": {
+    "A_ranking_artifact": 25,
+    "C_unverifiable_dominated": 20,
+    "B1_irrelevant_quote": 20,
+    "B2_global_negation_overreach": 12,
+    "D_other": 3
+  },
+  "n_unsupported_clearances": 101,
+  "n_correct_demographic_inferences": 21,
+  "limitations": [
+    "Bucket assignment is rule-based (content-word overlap + negation regex), validated by hand against cases spanning every bucket.",
+    "The demographic exemption only covers male subjects, so a few legitimate age-based clearances (a 3-year-old cannot have had menarche) count as unsupported."
+  ],
+  "cases": [
+    {
+      "topic": "2022_1",
+      "nct": "NCT00064987",
+      "rank": 5,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_1",
+      "nct": "NCT03687606",
+      "rank": 7,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 0,
+      "detail": "[9] Acquired hypogonadotrophic hypogonadism; <= \"A 19-year-old male came to clinic with some sexual\""
+    },
+    {
+      "topic": "2022_1",
+      "nct": "NCT03245827",
+      "rank": 8,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_10",
+      "nct": "NCT04716309",
+      "rank": 1,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 12,
+      "n_global_neg": 1,
+      "n_zero_overlap": 11,
+      "n_demographic_ok": 0,
+      "detail": "[3] multitrauma <= \"A 19-year-old girl comes to the clinic due to a le\" | [5] multiple injuries on the same side <= \"A 19-year-old girl comes to the clinic due to a le\" | [6] not competent to consent <= \"She noticed swelling on the top of her wrist about\""
+    },
+    {
+      "topic": "2022_10",
+      "nct": "NCT03193996",
+      "rank": 2,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 2,
+      "n_global_neg": 0,
+      "n_zero_overlap": 2,
+      "n_demographic_ok": 0,
+      "detail": "[4] previously-diagnosed rheumatological conditions or connectiv <= \"A 19-year-old girl comes to the clinic due to a le\" | [8] age under 18 or over 60 <= \"A 19-year-old girl comes to the clinic\""
+    },
+    {
+      "topic": "2022_11",
+      "nct": "NCT01398579",
+      "rank": 8,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 3,
+      "n_global_neg": 2,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 1,
+      "detail": "[9] patients who cannot undergo gastroscopies <= \"Upper endoscopy shows a lesion in the stomach\" | [10] have a personal history of stomach cancer or surgery <= \"He has no known medical problems\" | [11] any disabling illnesses <= \"He has no known medical problems\""
+    },
+    {
+      "topic": "2022_12",
+      "nct": "NCT02280343",
+      "rank": 1,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 0,
+      "detail": "[1] other diseases <= \"hypertension and osteoarthritis\""
+    },
+    {
+      "topic": "2022_14",
+      "nct": "NCT00170781",
+      "rank": 1,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 0,
+      "detail": "[4] With polyarticular gout involving > 4 joints <= \"severe left toe pain\""
+    },
+    {
+      "topic": "2022_14",
+      "nct": "NCT02545777",
+      "rank": 2,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 3,
+      "n_global_neg": 3,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": "[3] Secondary hyperuricemia, such as cancer and perichemotherapy <= \"Medical history is not significant except for the \" | [4] Acute infectious diseases, stroke, acute myocardial infarcti <= \"Medical history is not significant except for the \" | [5] Patients with peptic ulcer and gastrointestinal bleeding. <= \"Medical history is not significant except for the \""
+    },
+    {
+      "topic": "2022_14",
+      "nct": "NCT04734093",
+      "rank": 3,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 1,
+      "n_global_neg": 1,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": "[2] Patients with any known chronic arthritis, comprising rheuma <= \"Medical history is not significant except for the \""
+    },
+    {
+      "topic": "2022_14",
+      "nct": "NCT02471261",
+      "rank": 4,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 2,
+      "n_global_neg": 1,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 0,
+      "detail": "[3] Subjects who are not eligible for urate lowering treatment o <= \"His medication history includes Allopurinol to pre\" | [4] Subjects with significant cardiovascular, neuropsychiatric,  <= \"Medical history is not significant except for the \""
+    },
+    {
+      "topic": "2022_14",
+      "nct": "NCT01593527",
+      "rank": 5,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 0,
+      "detail": "[4] Rheumatoid arthritis, evidence/suspicion of infectious/septi <= \"negative Gram stain\""
+    },
+    {
+      "topic": "2022_14",
+      "nct": "NCT01109121",
+      "rank": 7,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 1,
+      "detail": ""
+    },
+    {
+      "topic": "2022_14",
+      "nct": "NCT02330796",
+      "rank": 8,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 7,
+      "n_global_neg": 7,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": "[19] Subjects with a history of myocardial infarction, unstable a <= \"Medical history is not significant except for the \" | [21] Subjects with acute or chronic infections including known HI <= \"Medical history is not significant except for the \" | [24] Subjects with significant heart failure and activity impairm <= \"Medical history is not significant except for the \""
+    },
+    {
+      "topic": "2022_16",
+      "nct": "NCT02472808",
+      "rank": 5,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 1,
+      "n_global_neg": 1,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": "[8] Those who received empiric Steroid for >2 weeks in preceding <= \"The prior medical condition is unremarkable, and s\""
+    },
+    {
+      "topic": "2022_2",
+      "nct": "NCT02787811",
+      "rank": 2,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 2,
+      "n_global_neg": 0,
+      "n_zero_overlap": 2,
+      "n_demographic_ok": 1,
+      "detail": "[7] PCOS/anovulatory patients <= \"She has regular menses lasting for 6 days and repe\" | [8] signs of hyperandrogenemia <= \"She has regular menses lasting for 6 days and repe\""
+    },
+    {
+      "topic": "2022_2",
+      "nct": "NCT02674178",
+      "rank": 4,
+      "bucket": "D_other",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 1,
+      "detail": ""
+    },
+    {
+      "topic": "2022_2",
+      "nct": "NCT04008966",
+      "rank": 5,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_20",
+      "nct": "NCT02065804",
+      "rank": 7,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 6,
+      "n_global_neg": 1,
+      "n_zero_overlap": 5,
+      "n_demographic_ok": 0,
+      "detail": "[4] Declared incapable of making his/hers own affairs <= \"A 49-year-old man comes to the office because of t\" | [6] Cognitive impairment to a degree influencing the testing rel <= \"A 49-year-old man comes to the office because of t\" | [8] Other surgical procedures performed in the groin or on the e <= \"His medical history is significant for mild dyslip\""
+    },
+    {
+      "topic": "2022_20",
+      "nct": "NCT04815707",
+      "rank": 9,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 1,
+      "detail": "[2] Patient has life expectancy of less than 2 years <= \"A 49-year-old man comes to the office because of t\""
+    },
+    {
+      "topic": "2022_23",
+      "nct": "NCT00001196",
+      "rank": 1,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 0,
+      "detail": "[2] a. Age less than 12 years. <= \"A 40-year-old woman comes to the clinic\""
+    },
+    {
+      "topic": "2022_24",
+      "nct": "NCT04495218",
+      "rank": 1,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 0,
+      "detail": "[4] Refusal to participate in research protocol. <= \"A 4-year-old boy comes to the office for the follo\""
+    },
+    {
+      "topic": "2022_24",
+      "nct": "NCT04658381",
+      "rank": 7,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_24",
+      "nct": "NCT02200263",
+      "rank": 8,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_24",
+      "nct": "NCT01838655",
+      "rank": 10,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_25",
+      "nct": "NCT00222417",
+      "rank": 4,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_25",
+      "nct": "NCT03172663",
+      "rank": 7,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_25",
+      "nct": "NCT04653662",
+      "rank": 8,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_25",
+      "nct": "NCT00393159",
+      "rank": 9,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_26",
+      "nct": "NCT01450930",
+      "rank": 5,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 1,
+      "n_global_neg": 1,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": "[4] Diabetes mellitus, <= \"She has no other medical conditions\""
+    },
+    {
+      "topic": "2022_26",
+      "nct": "NCT00552487",
+      "rank": 6,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_26",
+      "nct": "NCT01847690",
+      "rank": 7,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_26",
+      "nct": "NCT02152553",
+      "rank": 9,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_26",
+      "nct": "NCT00688987",
+      "rank": 10,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_27",
+      "nct": "NCT00132327",
+      "rank": 10,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 2,
+      "n_global_neg": 2,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": "[8] Diagnosis of diabetes, active cancer, or autoimmune diseases <= \"She is otherwise healthy\" | [12] Diagnosis of diabetes, cancer, autoimmune diseases. <= \"She is otherwise healthy\""
+    },
+    {
+      "topic": "2022_29",
+      "nct": "NCT00927056",
+      "rank": 9,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_3",
+      "nct": "NCT03356548",
+      "rank": 9,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_3",
+      "nct": "NCT04779593",
+      "rank": 10,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 1,
+      "detail": ""
+    },
+    {
+      "topic": "2022_30",
+      "nct": "NCT01799213",
+      "rank": 5,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 8,
+      "n_global_neg": 0,
+      "n_zero_overlap": 8,
+      "n_demographic_ok": 0,
+      "detail": "[11] Current use of opioids and/or Celebrex. <= \"Her medical history is significant for osteoarthri\" | [12] Current use of an NSAID (not including ASA) for a painful co <= \"Her medical history is significant for osteoarthri\" | [14] Previous hyaluronic acid knee injections (within 6 months) o <= \"Her medical history is significant for osteoarthri\""
+    },
+    {
+      "topic": "2022_30",
+      "nct": "NCT00000425",
+      "rank": 8,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_32",
+      "nct": "NCT02329275",
+      "rank": 7,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_32",
+      "nct": "NCT03497728",
+      "rank": 8,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_32",
+      "nct": "NCT02137265",
+      "rank": 10,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_34",
+      "nct": "NCT03433716",
+      "rank": 3,
+      "bucket": "D_other",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_34",
+      "nct": "NCT04773249",
+      "rank": 6,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_34",
+      "nct": "NCT03605563",
+      "rank": 7,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_34",
+      "nct": "NCT00130949",
+      "rank": 8,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_34",
+      "nct": "NCT02425982",
+      "rank": 10,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_35",
+      "nct": "NCT02794467",
+      "rank": 9,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 7,
+      "n_global_neg": 0,
+      "n_zero_overlap": 7,
+      "n_demographic_ok": 0,
+      "detail": "[5] A female subject will not be eligible for inclusion in this  <= \"A 43-year-old woman\" | [8] History of an endometrial ablation within 12 months of start <= \"gravida 3 para 3\" | [9] Uterine artery embolization within six months of starting st <= \"She is candidate for hysterectomy with the diagnos\""
+    },
+    {
+      "topic": "2022_37",
+      "nct": "NCT00569582",
+      "rank": 4,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 2,
+      "detail": ""
+    },
+    {
+      "topic": "2022_37",
+      "nct": "NCT01371565",
+      "rank": 5,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 2,
+      "detail": ""
+    },
+    {
+      "topic": "2022_37",
+      "nct": "NCT00422201",
+      "rank": 6,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 3,
+      "detail": "[6] Children (age less than 18) and patients over 85 years <= \"A 47-year-old man\""
+    },
+    {
+      "topic": "2022_37",
+      "nct": "NCT00796783",
+      "rank": 7,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_37",
+      "nct": "NCT00936741",
+      "rank": 8,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 4,
+      "detail": ""
+    },
+    {
+      "topic": "2022_39",
+      "nct": "NCT02791516",
+      "rank": 4,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 1,
+      "n_global_neg": 1,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": "[7] Bone disease other than osteoporosis/ or evidence of any oth <= \"She has no significant medical history\""
+    },
+    {
+      "topic": "2022_39",
+      "nct": "NCT00068822",
+      "rank": 5,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 6,
+      "n_global_neg": 6,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": "[4] Evidence or suspicion of malignant tumor or spinal canal com <= \"She has no significant medical history\" | [5] Concomitant hip fracture <= \"She has no significant medical history\" | [6] Local or systemic infection <= \"She has no significant medical history\""
+    },
+    {
+      "topic": "2022_40",
+      "nct": "NCT01769820",
+      "rank": 1,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 8,
+      "n_global_neg": 8,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 1,
+      "detail": "[11] Glucocorticoid treatment or sex steroid administration by an <= \"takes no medications\" | [12] Taking prohibited medication - <= \"takes no medications\" | [13] Thyroid, renal or liver dysfunction <= \"She has no other medical problems\""
+    },
+    {
+      "topic": "2022_41",
+      "nct": "NCT00974883",
+      "rank": 6,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 5,
+      "n_global_neg": 0,
+      "n_zero_overlap": 5,
+      "n_demographic_ok": 0,
+      "detail": "[13] Previous diagnosis of GCA. <= \"Temporal artery biopsy shows multinuclear giant ce\" | [15] Long term (>1 month) high dose (>20mg per day at any time) s <= \"Temporal artery biopsy shows multinuclear giant ce\" | [16] Inability to give informed consent (either written consent o <= \"A 61-year-old man comes to the emergency departmen\""
+    },
+    {
+      "topic": "2022_41",
+      "nct": "NCT03841734",
+      "rank": 10,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 3,
+      "n_global_neg": 0,
+      "n_zero_overlap": 3,
+      "n_demographic_ok": 1,
+      "detail": "[4] Underlying hepatocellular insufficiency known <= \"The patient has a history of mild hyperlipidemia t\" | [8] Any other ophthalmological pathology explaining the sudden d <= \"Visual examination is also normal.\" | [10] Patient under treatment with cyclosporine A, antiretrovirals <= \"The patient has a history of mild hyperlipidemia t\""
+    },
+    {
+      "topic": "2022_42",
+      "nct": "NCT01066052",
+      "rank": 4,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_42",
+      "nct": "NCT02137538",
+      "rank": 5,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_42",
+      "nct": "NCT00840944",
+      "rank": 6,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 0,
+      "detail": "[4] Adopted children ( different genetic background, lack of dat <= \"The patient's mother and father are 170 cm and 181\""
+    },
+    {
+      "topic": "2022_42",
+      "nct": "NCT02311322",
+      "rank": 8,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_42",
+      "nct": "NCT01237041",
+      "rank": 9,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_42",
+      "nct": "NCT03181230",
+      "rank": 10,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_43",
+      "nct": "NCT01529242",
+      "rank": 8,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_44",
+      "nct": "NCT00536328",
+      "rank": 10,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_46",
+      "nct": "NCT04858581",
+      "rank": 9,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 1,
+      "detail": ""
+    },
+    {
+      "topic": "2022_48",
+      "nct": "NCT01625390",
+      "rank": 1,
+      "bucket": "D_other",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_48",
+      "nct": "NCT00245245",
+      "rank": 4,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_48",
+      "nct": "NCT02622646",
+      "rank": 8,
+      "bucket": "C_unverifiable_dominated",
+      "unsupported": 0,
+      "n_global_neg": 0,
+      "n_zero_overlap": 0,
+      "n_demographic_ok": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_5",
+      "nct": "NCT02781207",
+      "rank": 7,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_5",
+      "nct": "NCT02188147",
+      "rank": 8,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_5",
+      "nct": "NCT02683174",
+      "rank": 9,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_6",
+      "nct": "NCT02834455",
+      "rank": 5,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 2,
+      "n_global_neg": 0,
+      "n_zero_overlap": 2,
+      "n_demographic_ok": 1,
+      "detail": "[6] Lack of language comprehension. <= \"A 61-year-old man comes to the clinic due to nonpr\" | [7] Legally incompetent patients. <= \"A 61-year-old man comes to the clinic due to nonpr\""
+    },
+    {
+      "topic": "2022_6",
+      "nct": "NCT04233359",
+      "rank": 6,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 0,
+      "detail": "[7] likely non-malignant course of a unilateral pleura effusion  <= \"Biopsy shows proliferation of epithelioid-type cel\""
+    },
+    {
+      "topic": "2022_7",
+      "nct": "NCT04265651",
+      "rank": 5,
+      "bucket": "B2_global_negation_overreach",
+      "unsupported": 8,
+      "n_global_neg": 6,
+      "n_zero_overlap": 2,
+      "n_demographic_ok": 0,
+      "detail": "[5] Hypochondroplasia or short stature condition other than ACH. <= \"The genetic testing reveals an autosomal dominant \" | [6] In females, having had their menarche. <= \"A 3-year-old girl is brought to the clinic\" | [10] History of malignancy. <= \"The girl has not received any treatment yet\""
+    },
+    {
+      "topic": "2022_8",
+      "nct": "NCT01985646",
+      "rank": 3,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_8",
+      "nct": "NCT01566409",
+      "rank": 6,
+      "bucket": "A_ranking_artifact",
+      "unsupported": 0,
+      "detail": ""
+    },
+    {
+      "topic": "2022_9",
+      "nct": "NCT01249300",
+      "rank": 1,
+      "bucket": "B1_irrelevant_quote",
+      "unsupported": 1,
+      "n_global_neg": 0,
+      "n_zero_overlap": 1,
+      "n_demographic_ok": 0,
+      "detail": "[1] Patients who are severely demented or severely compromised w <= \"she is able to do her own daily activities.\""
+    }
+  ]
+}
