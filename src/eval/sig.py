@@ -1,9 +1,9 @@
-"""Kiem dinh y nghia thong ke bang paired bootstrap.
+"""Statistical significance via paired bootstrap.
 
-Voi 75 topic (dev) hoac 50 topic (test), chenh lech nDCG duoi khoang 0.02 rat
-de la nhieu — ma cai thang do cua Phase 3..8 se sinh ra vai chenh lech dung
-trong khoang do. Khong co kiem dinh thi khong phan biet duoc "rung nay cao hon
-rung kia" voi "hai lan chay khac nhau".
+With 75 topics (dev) or 50 (test), nDCG differences under ~0.02 are easily
+noise — and the ladder from Phase 3..8 produces several differences right in
+that range. Without a test, "this rung beats that rung" is indistinguishable
+from "two different runs".
 """
 
 from __future__ import annotations
@@ -13,15 +13,15 @@ import numpy as np
 
 def paired_bootstrap(a: dict[str, float], b: dict[str, float],
                      n_boot: int = 10000, seed: int = 0) -> dict[str, float]:
-    """So sanh hai he thong tren cung tap topic.
+    """Compare two systems on the same set of topics.
 
-    `a` va `b` la {topic_id: diem}. Chi dung cac topic co mat o CA HAI ben —
-    so sanh tren tap topic lech nhau la vo nghia.
+    `a` and `b` are {topic_id: score}. Only topics present in BOTH are used —
+    comparing on mismatched topic sets is meaningless.
 
-    Tra ve chenh lech quan sat, khoang tin cay 95% (bootstrap percentile), va
-    p-value hai phia theo phuong phap dich ve gia thuyet khong (shift method):
-    dich phan phoi chenh lech ve 0 roi dem xem bao nhieu lan resample cho gia
-    tri tuyet doi >= chenh lech quan sat.
+    Returns the observed difference, a 95% CI (bootstrap percentile), and a
+    two-sided p-value via the null-shift method: shift the difference
+    distribution to 0, then count how many resamples have |diff| >= the
+    observed one.
     """
     shared = sorted(set(a) & set(b))
     if not shared:
@@ -34,7 +34,7 @@ def paired_bootstrap(a: dict[str, float], b: dict[str, float],
     idx = rng.integers(0, len(d), size=(n_boot, len(d)))
     draws = d[idx].mean(axis=1)
 
-    centred = draws - obs                      # gia thuyet khong: chenh lech = 0
+    centred = draws - obs                      # null hypothesis: difference = 0
     p = float((np.abs(centred) >= abs(obs)).mean())
     lo, hi = np.percentile(draws, [2.5, 97.5])
 

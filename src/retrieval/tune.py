@@ -1,14 +1,14 @@
-"""Phase 3 buoc 5 — quet luoi k1/b tren tap dev.
+"""Phase 3 step 5 — sweep BM25 k1/b on the dev set.
 
     python -m src.retrieval.tune --index indexes/bm25-base
 
-Index dung MOT LAN, moi cau hinh chi ton thoi gian search, nen quet 20 cau hinh
-re hon nhieu so voi tuong.
+The index is built ONCE; each config only costs search time, so a 20-config
+sweep is far cheaper than it sounds.
 
-CHON THEO `eligible/ndcg_cut_10`, KHONG phai `official/ndcg_cut_10`.
-Thang chinh thuc cho trial EXCLUDED gain duong, nen toi uu theo no la toi uu
-cho viec tim ra dung nhung trial ma benh nhan KHONG vao duoc — nguoc han muc
-tieu de tai. Xem src/eval/metrics.py.
+Selects by `eligible/ndcg_cut_10`, NOT `official/ndcg_cut_10`. The official
+scale scores EXCLUDED trials positively, so optimizing for it means
+optimizing for finding trials the patient CANNOT enter — the opposite of
+this project's goal. See src/eval/metrics.py.
 """
 
 from __future__ import annotations
@@ -22,9 +22,9 @@ import time
 from src.eval import data, metrics
 from src.retrieval.bm25 import search
 
-# Luoi ban dau [0.6..1.8] x [0.3..0.9] cho toi uu roi dung GOC (k1=1.8, b=0.9),
-# nghia la diem tot nhat nam NGOAI luoi. Mo rong: b chan tren la 1.0 theo dinh
-# nghia BM25; k1 khong bi chan nen keo den 4.0.
+# Initial grid [0.6..1.8] x [0.3..0.9] converged at the EDGE (k1=1.8, b=0.9),
+# meaning the true optimum was outside it. Widened: b caps at 1.0 by BM25's
+# definition; k1 is unbounded, so extended to 4.0.
 K1_GRID = [0.9, 1.2, 1.5, 1.8, 2.2, 2.6, 3.0, 4.0]
 B_GRID = [0.5, 0.75, 0.9, 1.0]
 SELECT_BY = "eligible/ndcg_cut_10"

@@ -1,28 +1,16 @@
-"""Phase 8 buoc 1 — schema quyet dinh muc TIEU CHI, ba trang thai.
+"""Phase 8 step 1 — CRITERION-level decision schema, three states.
 
-BA TRANG THAI LA DONG GOP, KHONG PHAI CHI TIET KY THUAT
---------------------------------------------------------
-    satisfied     benh an noi dieu THOA MAN tieu chi
-    violated      benh an noi dieu KHONG THOA MAN tieu chi
-    unverifiable  benh an KHONG NOI GI ve dieu tieu chi hoi
+    satisfied     the narrative states something that meets the criterion
+    violated      the narrative states something that fails the criterion
+    unverifiable  the narrative says nothing about what the criterion asks
 
-Voi tieu chi LOAI TRU, huong bi dao: "satisfied" nghia la benh nhan KHONG co
-dieu bi loai tru (nen khong bi loai), "violated" nghia la CO (nen bi loai).
-Prompt noi ro dieu nay vi day la cho de nham nhat.
+For an EXCLUSION criterion the direction inverts: "satisfied" means the
+patient does NOT have the excluding condition. Collapsing `unverifiable` into
+either other state would destroy invariant 1 — `FORCED_SCHEMA` drops it
+deliberately, only to run the ablation testing whether three states help.
 
-Gop `unverifiable` vao mot trong hai trang thai kia se pha huy chinh dong gop
-cua de tai (invariant 1). Vi vay co `FORCED_SCHEMA` — ban BO `unverifiable` —
-de chay ablation lua chon ep buoc: neu hai trang thai lam cung tot thi dong
-gop ba trang thai CHUA duoc chung minh, va nguoi phan bien se hoi dieu do.
-
-HAI TRICH DAN, KHONG PHAI MOT
-------------------------------
-`criterion_quote` phai la chuoi con nguyen van cua TIEU CHI (kiem bang
-store.verify_quote, doi chieu span offset vao criteria_raw goc).
-`patient_evidence` phai la chuoi con nguyen van cua BENH AN.
-
-Hai phia phai kiem rieng: mot model co the trich dung tieu chi roi bia bang
-chung benh nhan, hoac nguoc lai. Chi kiem mot phia la de lot nua so loi.
+Two separate quotes, checked independently: a model can fabricate either
+`criterion_quote` or `patient_evidence` while quoting the other correctly.
 """
 
 from __future__ import annotations
@@ -33,7 +21,7 @@ import json
 import prompts
 
 LABELS = ("satisfied", "violated", "unverifiable")
-FORCED_LABELS = ("satisfied", "violated")   # ablation lua chon ep buoc
+FORCED_LABELS = ("satisfied", "violated")   # forced-choice ablation
 
 _DECISION_PROPS = {
     "label": {
@@ -55,7 +43,7 @@ _DECISION_PROPS = {
 
 
 def decision_schema(forced: bool = False) -> dict:
-    """Schema mot quyet dinh (che do goi tung tieu chi)."""
+    """Schema for one decision (per-criterion call mode)."""
     props = json.loads(json.dumps(_DECISION_PROPS))
     if forced:
         props["label"]["enum"] = list(FORCED_LABELS)
@@ -67,10 +55,10 @@ def decision_schema(forced: bool = False) -> dict:
 
 
 def batch_schema(n: int, forced: bool = False) -> dict:
-    """Schema goi CA TRIAL mot lan — moi muc mang `criterion_idx` de khop lai.
+    """Schema for one whole-trial call — each item carries `criterion_idx` to match back.
 
-    Khop theo idx chu khong theo thu tu mang: mot lan khop sai se gan quyet
-    dinh cua tieu chi nay cho tieu chi khac, dung dieu invariant 3 cam.
+    Matched by idx, never by array order: a mismatch would attribute one
+    criterion's decision to another, which invariant 3 forbids.
     """
     item = decision_schema(forced)
     item["properties"] = {"criterion_idx": {"type": "integer"}, **item["properties"]}
@@ -99,7 +87,7 @@ def batch_user_prompt(narrative: str, nct_id: str, criteria: list[dict]) -> str:
 
 
 def prompt_hash(forced: bool = False, batched: bool = True) -> str:
-    """Van tay prompt+schema, mot phan khoa cache — doi prompt thi cache phai hong."""
+    """Fingerprint of prompt + schema, part of the cache key — changing the prompt must invalidate it."""
     blob = ((BATCH_SYSTEM if batched else SYSTEM)
             + prompts.load("eligibility_batch_item")
             + prompts.load("eligibility_batch_user" if batched else "eligibility_user")

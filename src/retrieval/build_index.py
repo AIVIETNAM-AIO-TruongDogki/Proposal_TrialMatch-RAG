@@ -1,10 +1,10 @@
-"""Phase 3 buoc 3 — dung index Lucene tu JSONL.
+"""Phase 3 step 3 — build a Lucene index from JSONL.
 
-    python -m src.retrieval.build_index                    # ban base
-    python -m src.retrieval.build_index --with-criteria    # ban de ablate
+    python -m src.retrieval.build_index                    # base variant
+    python -m src.retrieval.build_index --with-criteria    # ablation variant
 
-Boc lenh `pyserini.index.lucene`. Viet thanh module de tham so index duoc ghi
-lai cung cho voi phan con lai cua pipeline, thay vi nam trong lich su shell.
+Wraps `pyserini.index.lucene`. Written as a module so index parameters are
+recorded alongside the rest of the pipeline, instead of living in shell history.
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ def build(input_dir: str, index_dir: str, threads: int = 16) -> int:
         "--index", index_dir,
         "--generator", "DefaultLuceneDocumentGenerator",
         "--threads", str(threads),
-        # storePositions/Docvectors can cho reranking va phan tich sau nay;
-        # storeRaw de doc lai van ban da index khi go loi.
+        # storePositions/Docvectors needed for reranking and later analysis;
+        # storeRaw so the indexed text can be read back for debugging.
         "--storePositions", "--storeDocvectors", "--storeRaw",
     ]
     print(" ".join(cmd) + "\n", flush=True)

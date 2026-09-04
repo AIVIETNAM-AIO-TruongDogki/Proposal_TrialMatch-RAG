@@ -1,26 +1,21 @@
-"""Phase 6 — hop nhat hai chan truy hoi (bac 3 cua thang ablation).
+"""Phase 6 — fuse the two retrieval legs (ladder rung 3).
 
     python -m src.retrieval.fusion --lexical runs/bm25_best.dev.txt \
         --dense runs/dense.dev.txt --out runs/hybrid.dev.txt
     python -m src.retrieval.fusion ... --method wsum --tune
 
-HAI PHUONG PHAP, BAO CAO CA HAI
---------------------------------
-RRF:   score(d) = sum_i 1/(k + rank_i(d)),  k = 60.
-       Mot dong, khong can chuan hoa diem, va thuong THANG weighted fusion.
-       Vi vay no la mac dinh, khong phai phuong an du phong.
+Two methods, both reported:
+RRF:   score(d) = sum_i 1/(k + rank_i(d)), k = 60. One line, no score
+       normalization needed, and usually BEATS weighted fusion — the default,
+       not a fallback.
+wsum:  normalize scores (minmax or zscore) then weighted-sum. Scale-sensitive:
+       BM25 is unbounded Lucene score, dense is cosine in [-1,1] — without
+       normalization one leg drowns the other.
 
-wsum:  chuan hoa diem (minmax hoac zscore) roi cong co trong so.
-       Nhay cam voi thang diem: BM25 tra ve diem Lucene khong chan tren, dense
-       tra ve cosine trong [-1,1]. Khong chuan hoa thi mot chan nuot chan kia.
-
-PHAN BU MOI LA KET QUA, KHONG PHAI DIEM HOP NHAT
--------------------------------------------------
-Cau hoi cua Phase 6 khong phai "diem hop nhat cao hon bao nhieu" ma "hai chan
-co that su mang tin hieu KHAC NHAU khong". Neu chong lan gan hoan toan thi
-viec hop nhat mua duoc rat it, va luan diem "ca hai chan deu chiu luc" cua de
-xuat phai duoc noi lai cho dung — do la mot ket qua phai BAO CAO, khong phai
-mot that bai phai giau.
+Complementarity is the result that matters, not the fused score. Phase 6's
+real question is whether the two legs carry DIFFERENT signal, not how much
+higher the fused score is. Near-total overlap would mean fusion buys little,
+and that's a result to REPORT, not a failure to hide.
 """
 
 from __future__ import annotations
@@ -74,9 +69,9 @@ def wsum(runs: list[dict], weights: list[float], how: str = "minmax"
 
 
 def complementarity(lex: dict, dense: dict, qrels: dict, k: int = 1000) -> dict:
-    """Bang phan bu — deliverable BAT BUOC cua Phase 6, khong phai tuy chon.
+    """Complementarity table — Phase 6's required deliverable, not optional.
 
-    Chi dem trial ELIGIBLE: do la thu Phase 8 can va thu de tai do.
+    Counts only ELIGIBLE trials: that's what Phase 8 needs and what this project measures.
     """
     only_l = only_d = both = neither = gold = 0
     for tid, docs in qrels.items():

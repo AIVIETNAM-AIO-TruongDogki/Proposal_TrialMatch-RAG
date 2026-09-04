@@ -1,1 +1,0 @@
-Write a short, plausible clinical trial description for each of the {n} independent patients below.

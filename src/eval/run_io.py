@@ -1,9 +1,9 @@
-"""Doc/ghi run file dinh dang TREC + ghi so ket qua.
+"""Read/write TREC-format run files + log results.
 
-Dinh dang TREC:  `topic_id Q0 doc_id rank score run_tag`
+TREC format: `topic_id Q0 doc_id rank score run_tag`
 
-Moi lan chay deu duoc ghi lai kem commit git va cau hinh. Khong co so ghi thi
-den Phase 11 se khong the tai lap hay giai thich noi mot con so nao.
+Every run is logged with its git commit and config. Without that log, by
+Phase 11 no number could be reproduced or explained.
 """
 
 from __future__ import annotations

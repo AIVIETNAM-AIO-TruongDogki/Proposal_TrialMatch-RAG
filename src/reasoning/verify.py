@@ -1,29 +1,13 @@
-"""Phase 8 buoc 3 — bien invariant 3 tu loi hua thanh phep do.
+"""Phase 8 step 3 — turns invariant 3 from a promise into a measurement.
 
-MOT QUYET DINH KHONG TRICH DAN DUOC LA MOT QUYET DINH BI VUT
--------------------------------------------------------------
-`criterion_quote` phai la chuoi con nguyen van cua CHINH tieu chi do — kiem
-qua store.verify_quote(), ham nay doi chieu nguoc ve span_start/span_end trong
-trials.criteria_raw, tuc la ve dung chuoi goc lay tu XML ClinicalTrials.gov.
-Khong phai doi chieu voi mot ban da bi chinh sua o dau do.
-
-`patient_evidence` phai la chuoi con nguyen van cua BENH AN.
-
-KIEM CA HAI PHIA — KIEM MOT PHIA LA LOT NUA SO LOI
----------------------------------------------------
-Model co the trich dung tieu chi roi bia bang chung benh nhan (de ket luan
-`satisfied` cho mot dieu benh an khong he noi), hoac trich dung benh an roi
-gan cho mot tieu chi khac. Hai loi doc lap nhau, nen hai phep kiem doc lap.
-
-TY LE BI VUT LA MOT KET QUA PHAI BAO CAO
------------------------------------------
-Khong phai mot bo loc am tham. "Ty le vi pham grounding = 6%" la mot con so
-do duoc ve do trung thuc cua model, va no thuoc ve bang ket qua cuoi cung.
-
-NGOAI LE CO Y: `unverifiable` duoc phep co patient_evidence RONG
------------------------------------------------------------------
-Khong the trich dan bang chung cho mot thu benh an khong nhac toi. Bat buoc
-trich dan o day se ep model bia ra mot doan van — dung dieu ta dang chong.
+A decision that can't be quoted gets dropped. `criterion_quote` is checked
+against the ORIGINAL criterion text (via store.verify_quote, offsets into the
+raw XML), never a text that could have been edited elsewhere.
+`patient_evidence` is checked separately against the narrative — a model can
+fabricate either side while quoting the other correctly. The rejection rate
+is reported, not silently filtered — it measures the model's groundedness.
+Exception: `unverifiable` may have empty `patient_evidence`, since forcing a
+quote there would force a fabrication.
 """
 
 from __future__ import annotations
@@ -33,7 +17,7 @@ from src.reasoning.schema import LABELS
 
 
 def norm(s: str) -> str:
-    """Chuan hoa y het store.verify_quote(): gop khoang trang, ha chu thuong."""
+    """Normalize exactly like store.verify_quote(): collapse whitespace, lowercase."""
     return " ".join((s or "").split()).lower()
 
 
@@ -44,7 +28,7 @@ def grounded_in(quote: str, source: str) -> bool:
 
 def check(conn, decision: dict, nct_id: str, idx: int, narrative: str
           ) -> tuple[bool, str | None]:
-    """(hop le, ly do bi vut). Ly do duoc giu lai de phan tich, khong chi dem."""
+    """(is_valid, rejection_reason). Reason is kept for analysis, not just counted."""
     label = decision.get("label")
     if label not in LABELS:
         return False, "label_invalid"
@@ -55,7 +39,7 @@ def check(conn, decision: dict, nct_id: str, idx: int, narrative: str
 
     pe = decision.get("patient_evidence") or ""
     if label == "unverifiable":
-        # Co y cho phep rong: khong the trich dan cho thu khong duoc nhac toi.
+        # Deliberately allowed empty: nothing to quote for something never mentioned.
         if pe and not grounded_in(pe, narrative):
             return False, "patient_evidence_not_in_narrative"
         return True, None

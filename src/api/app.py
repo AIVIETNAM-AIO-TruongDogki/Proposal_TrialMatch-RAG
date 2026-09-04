@@ -1,8 +1,14 @@
-"""Phase 10 — FastAPI: /match/stream (SSE), /quota, static frontend.
+"""Phase 10 — FastAPI backend: /match/stream (SSE), /quota. No frontend here.
 
     uvicorn src.api.app:app --port 8000
 
-Xem specs/10-end-to-end-system.md va docs/decisions/ cho boi canh thiet ke.
+The static UI lives in `frontend/` and is deployed separately (its own static
+host, or `python -m http.server` locally) — set `TRIALMATCH_API_BASE` in
+`frontend/index.html` to point it at wherever this backend runs. CORS is open
+by default (`DEMO_CORS_ORIGINS`, comma-separated) since this is a public demo
+with no cookies/credentials to protect; narrow it for anything less throwaway.
+
+See specs/10-end-to-end-system.md and docs/decisions/ for design context.
 """
 
 from __future__ import annotations
@@ -12,7 +18,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from src.api.pipeline import LIVE_TOP_N, MAX_NARRATIVE_CHARS, run_match
@@ -20,7 +26,7 @@ from src.api.state import AppState
 
 DAILY_CAP = int(os.environ.get("DEMO_GEMINI_DAILY_CAP", "150"))
 MATCH_CONCURRENCY = int(os.environ.get("DEMO_MATCH_CONCURRENCY", "2"))
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+CORS_ORIGINS = [o.strip() for o in os.environ.get("DEMO_CORS_ORIGINS", "*").split(",") if o.strip()]
 
 
 @asynccontextmanager
@@ -30,10 +36,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS,
+                   allow_methods=["GET"], allow_headers=["*"])
 
 
 def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+@app.get("/")
+async def health():
+    return {"service": "trialmatch-rag-api", "status": "ok"}
 
 
 @app.get("/quota")
@@ -43,17 +56,17 @@ async def quota_status(request: Request):
 
 @app.get("/match/stream")
 async def match_stream(request: Request, narrative: str):
-    """LUON tra HTTP 200 + text/event-stream — moi loi (qua ngan sach, qua tai,
-    benh an rong...) di qua SU KIEN `error` BEN TRONG luong, khong qua ma trang
-    thai HTTP.
+    """ALWAYS returns HTTP 200 + text/event-stream — every error (over budget,
+    overloaded, empty narrative...) goes through an `error` EVENT inside the
+    stream, never an HTTP status code.
 
-    Ly do: trinh duyet `EventSource` KHONG doc duoc body cua mot response ma
-    status khac 200/khac content-type — no chi coi do la loi ket noi tran trui,
-    `ev.data` rong, va nguoi dung chi thay "Connection lost." chung chung du
-    server da tra dung ly do (vd 429 kem JSON {"error": "vuot gioi han..."}).
-    Day la gioi han THAT cua chinh EventSource, khong phai loi giai ma phia
-    client — cach sua dung la khong bao gio dua loi vao ma trang thai HTTP cho
-    endpoint nay.
+    Why: the browser's `EventSource` can't read the body of a response with
+    a non-200 status or wrong content-type — it just sees a bare connection
+    failure, `ev.data` is empty, and the user sees a generic "Connection
+    lost." even though the server returned a proper reason (e.g. 429 with
+    JSON {"error": "over budget..."}). This is a real EventSource
+    limitation, not a client decoding bug — the fix is to never put an error
+    into the HTTP status for this endpoint.
     """
     state: AppState = app.state.trialmatch
     ip = _client_ip(request)
@@ -83,14 +96,9 @@ async def match_stream(request: Request, narrative: str):
                 if name == "done":
                     state.quota.commit(ip, payload.get("gemini_calls", 0))
                 yield {"event": name, "data": json.dumps(payload, ensure_ascii=False)}
-        except Exception as e:  # noqa: BLE001 — bao loi qua SSE thay vi 500 cau cam
+        except Exception as e:  # noqa: BLE001 — surface the error over SSE instead of a bare 500
             yield {"event": "error", "data": json.dumps({"message": str(e)})}
         finally:
             await state.concurrency.release()
 
     return EventSourceResponse(event_gen())
-
-
-# Mount SAU CUNG — dang ky route API truoc de chung khong bi static handler
-# nuot mat (StaticFiles(html=True) phuc vu "/" bang index.html).
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

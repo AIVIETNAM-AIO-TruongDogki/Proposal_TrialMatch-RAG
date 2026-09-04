@@ -1,8 +1,8 @@
-"""Phase 10 — trang thai dung chung cho toan bo tien trinh API.
+"""Phase 10 — shared state for the whole API process.
 
-Dung DUNG MOT LAN trong `app.py`'s lifespan, khong phai moi request — day
-chinh la diem khac biet voi cac batch script Phase 3-8, von coi moi lan chay
-la doc lap va load lai tu dau.
+Constructed EXACTLY ONCE, in `app.py`'s lifespan — not per request. This is
+the real difference from the Phase 3-8 batch scripts, which treat every run
+as independent and reload everything from scratch.
 """
 
 from __future__ import annotations
@@ -24,20 +24,20 @@ QUOTA_PATH = "data/demo_quota.json"
 class AppState:
     def __init__(self, daily_cap: int = DEFAULT_DAILY_CAP,
                 concurrency: int = DEFAULT_CONCURRENCY, device: str | None = None):
-        # check_same_thread=False: cac buoc pipeline chay qua asyncio.to_thread(),
-        # tuc la tren nhieu thread khac nhau — xem docstring cua open_db().
+        # check_same_thread=False: pipeline steps run via asyncio.to_thread(),
+        # i.e. on multiple different threads — see open_db()'s docstring.
         self.conn = store.open_db(DB_PATH, check_same_thread=False)
 
-        # "May sach" o tieu chi thoat cua specs/10 khong noi "co GPU" — tu nhan
-        # dien thay vi gia dinh cuda luon co, de cold-start khong chet tren mot
-        # may khong GPU. Ma hoa mot cau ngan bang model 0.6B tren CPU van chi
-        # mat vai giay, khong dang ke so voi 10s+ da ton cho moi loi goi Gemini.
+        # specs/10's "clean machine" exit criterion doesn't say "has a GPU" —
+        # auto-detect rather than assume cuda, so cold start doesn't crash on
+        # a GPU-less machine. Encoding a short sentence with a 0.6B model on
+        # CPU still only takes seconds, negligible next to the 10s+ already
+        # spent per Gemini call.
         dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.dense = LiveDenseIndex(DENSE_VECS, DENSE_MODEL, device=dev)
 
-        # Tra truoc chi phi khoi dong JVM cua pyserini (~17s do thuc te tren
-        # may dev) NGAY luc khoi dong server, khong phai o request dau tien
-        # cua nguoi dung that.
+        # Pay pyserini's JVM startup cost (~17s measured on the dev machine)
+        # NOW, at server startup, instead of on the first real user's request.
         bm25.search(query.BEST_INDEX, {"__warmup__": "warmup"},
                    query.BEST_K1, query.BEST_B, depth=1)
 

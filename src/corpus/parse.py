@@ -1,14 +1,15 @@
-"""Parse ClinicalTrials.gov XML thanh record + criteria da tach.
+"""Parse ClinicalTrials.gov XML into a trial record + segmented criteria.
 
-Hai quy tac chi phoi toan bo module nay:
+Two rules govern this whole module:
 
-1. Parse phong thu. Gan nhu moi the deu optional va nhieu the lap lai.
-   Khong bao gio gia dinh mot the co mat.
+1. Parse defensively. Almost every tag is optional and many repeat. Never
+   assume a tag is present.
 
-2. Normalize dung thu tu. Text block bi wrap cung bang `&#xD;` (CR). Xoa CR
-   la dung, nhung `' '.join(text.split())` thi SAI: no xoa luon ky tu xuong
-   dong dang phan tach cac bullet, va moi criteria se dinh lam mot khoi.
-   Loi nay khong bao ra ngoai — no chi lam so criteria tut tu 13.3 xuong 1.0.
+2. Normalize in the right order. Text blocks are wrapped with literal
+   `&#xD;` (CR). Stripping CR is correct, but `' '.join(text.split())` is
+   NOT — it also erases the newlines that separate bullets, collapsing every
+   criterion into one block. This fails silently: it just drops the average
+   criteria count from 13.3 to 1.0.
 """
 
 from __future__ import annotations
@@ -17,12 +18,12 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
-# Dau dong dang bullet. Co tinh KHONG nhan dang `a.` / `i.` (chu cai + dau cham)
-# vi dong tiep noi bat dau bang mot chu cai roi dau cham la chuyen thuong gap,
-# nhan nham se cat doi mot criterion dang hoan chinh.
+# Bullet-line markers. Deliberately does NOT match `a.` / `i.` (letter + dot)
+# — a continuation line starting with a letter then a period is common, and
+# misdetecting it would split one criterion in half.
 BULLET_RE = re.compile(r"^(\s*)(?:[-*•‣▪·–—]|\(\d+\)|\d+[.)]|\([a-zA-Z]\)|[a-zA-Z]\))\s+")
 
-# Dong header dung rieng mot minh: "Inclusion Criteria:", "EXCLUSION CRITERIA",
+# A header line standing alone: "Inclusion Criteria:", "EXCLUSION CRITERIA",
 # "Key Inclusion Criteria", "Exclusion Criteria for Cohort B:"
 HEADER_RE = re.compile(
     r"^\s*(?:key|main|principal|general|major)?\s*"
@@ -30,7 +31,7 @@ HEADER_RE = re.compile(
     re.I,
 )
 
-# Header co noi dung ngay tren cung dong: "Inclusion Criteria: patients must ..."
+# A header with content on the same line: "Inclusion Criteria: patients must ..."
 HEADER_INLINE_RE = re.compile(
     r"^\s*(?:key|main|principal|general|major)?\s*"
     r"(inclusion|exclusion|ineligibility)\b[^:\n]{0,60}?:\s*(\S.*)$",
@@ -91,11 +92,11 @@ class Trial:
 # --------------------------------------------------------------------------- #
 
 def normalize_textblock(raw: str | None) -> str | None:
-    """Chuan hoa mot <textblock> nhung GIU NGUYEN ranh gioi dong.
+    """Normalize a <textblock> while KEEPING line boundaries intact.
 
-    Chi lam ba viec: thong nhat ky tu xuong dong, cat khoang trang cuoi dong,
-    va bo phan thut le chung. Khong gop dong, vi dong chinh la thu phan tach
-    cac criteria.
+    Only three things: unify line endings, trim trailing whitespace per line,
+    and strip common indentation. Never joins lines — lines are what
+    separates criteria.
     """
     if raw is None:
         return None
@@ -110,7 +111,7 @@ def normalize_textblock(raw: str | None) -> str | None:
 
 
 def flatten(raw: str | None) -> str | None:
-    """Gop thanh mot dong. Chi dung cho truong KHONG can offset (title, summary)."""
+    """Collapse to one line. Only for fields that need no offset (title, summary)."""
     if raw is None:
         return None
     s = " ".join(raw.replace("\r", " ").split())
@@ -120,9 +121,9 @@ def flatten(raw: str | None) -> str | None:
 def parse_age(raw: str | None) -> tuple[float | None, str | None]:
     """'14 Years' -> (14.0, '14 Years');  'N/A' -> (None, 'N/A').
 
-    Tra ve None khi khong xac dinh duoc. Nguoi goi PHAI coi None la 'khong
-    biet', khong duoc thay bang 0 hay vo cuc — do la cho invariant 2 bi pha
-    lan dau tien va am tham nhat.
+    Returns None when undetermined. Callers MUST treat None as "unknown",
+    never substitute 0 or infinity — this is the first and most silent place
+    invariant 2 gets broken.
     """
     if raw is None:
         return None, None
@@ -131,7 +132,7 @@ def parse_age(raw: str | None) -> tuple[float | None, str | None]:
         return None, None
     m = _AGE_RE.match(raw)
     if not m:
-        return None, raw  # 'N/A' va cac dang la khac
+        return None, raw  # 'N/A' and other unparseable forms
     return float(m.group(1)) * _AGE_FACTOR[m.group(2).lower()], raw
 
 
@@ -140,11 +141,11 @@ def parse_age(raw: str | None) -> tuple[float | None, str | None]:
 # --------------------------------------------------------------------------- #
 
 def _locate(blob: str, lo: int, hi: int, text: str) -> tuple[int, int]:
-    """Tim vi tri that cua `text` trong blob[lo:hi].
+    """Find `text`'s real position within blob[lo:hi].
 
-    Text da bi gop khoang trang con blob thi con nguyen xuong dong, nen phai
-    khop mem: moi khoang trang trong text co the ung voi bat ky chuoi khoang
-    trang nao trong blob. Khong tim thay thi lui ve span cua ca block.
+    `text` has had whitespace collapsed while `blob` still has newlines, so
+    matching must be fuzzy: any whitespace in `text` can match any run of
+    whitespace in `blob`. Falls back to the whole block's span if not found.
     """
     tokens = text.split()
     if not tokens:
@@ -171,18 +172,18 @@ def _section_of(line: str) -> str:
 
 
 def segment_criteria(blob: str | None) -> tuple[list[Criterion], str]:
-    """Tach blob eligibility thanh tung criterion rieng le.
+    """Split the eligibility blob into individual criteria.
 
-    Tra ve (danh sach criterion, phuong phap da dung). Moi criterion mang
-    span tro nguoc vao chinh `blob` da normalize, nen co the kiem chung
-    `blob[span_start:span_end]` khop voi text — day la co so ky thuat cua
-    invariant 3 (moi ket luan phai truy nguoc ve nguon).
+    Returns (criteria list, method used). Each criterion carries a span back
+    into the normalized `blob`, so `blob[span_start:span_end]` can be checked
+    against its text — this is the technical basis of invariant 3 (every
+    conclusion must trace back to its source).
     """
     if not blob:
         return [], "none"
 
-    # Gom thanh cac "block": moi block la 1 bullet + cac dong tiep noi cua no,
-    # hoac 1 doan van tho khi khong co bullet.
+    # Group into "blocks": one bullet + its continuation lines, or one raw
+    # paragraph when there's no bullet at all.
     section = "unknown"
     lead_in: str | None = None
     blocks: list[dict] = []
@@ -193,7 +194,7 @@ def segment_criteria(blob: str | None) -> tuple[list[Criterion], str]:
     offset = 0
     for line in blob.split("\n"):
         start = offset
-        offset += len(line) + 1  # +1 cho '\n'
+        offset += len(line) + 1  # +1 for '\n'
         kind = _classify(line)
 
         if kind == "blank":
@@ -204,7 +205,7 @@ def segment_criteria(blob: str | None) -> tuple[list[Criterion], str]:
             lead_in = None
             section = _section_of(line)
             m = HEADER_INLINE_RE.match(line)
-            if m:  # con noi dung sau dau hai cham -> xu ly nhu dong text
+            if m:  # content after the colon -> treat as a text line
                 s2 = start + m.start(2)
                 cur = {"section": section, "start": s2, "end": start + len(line),
                        "parts": [m.group(2).strip()], "lead_in": None}
@@ -215,16 +216,17 @@ def segment_criteria(blob: str | None) -> tuple[list[Criterion], str]:
             m = BULLET_RE.match(line)
             body = line[m.end():].strip()
 
-            # Header nam duoi dang bullet: "-  Exclusion Criteria:". Neu coi no
-            # la mot criterion thi section khong chuyen, va MOI criterion sau do
-            # bi gan nhan sai. O Phase 8 loi nay lat nguoc ket luan: mot tieu chi
-            # loai tru bi coi la tieu chi thu nhan se doi violated thanh satisfied.
+            # A header disguised as a bullet: "-  Exclusion Criteria:". Treating
+            # it as a criterion would leave `section` unchanged, mislabeling
+            # every criterion after it — in Phase 8 this flips a conclusion:
+            # an exclusion criterion read as inclusion turns `violated` into
+            # `satisfied`.
             if HEADER_RE.match(body) or HEADER_INLINE_RE.match(body):
                 cur = None
                 lead_in = None
                 section = _section_of(body)
                 mi = HEADER_INLINE_RE.match(body)
-                if mi:  # con noi dung sau dau hai cham
+                if mi:  # content after the colon
                     s2 = start + m.end() + mi.start(2)
                     cur = {"section": section, "start": s2, "end": start + len(line),
                            "parts": [mi.group(2).strip()], "lead_in": None}
@@ -243,19 +245,19 @@ def segment_criteria(blob: str | None) -> tuple[list[Criterion], str]:
         # kind == "text"
         stripped = line.strip()
         if cur is not None:
-            # dong tiep noi cua criterion dang mo
+            # continuation line of the open criterion
             cur["parts"].append(stripped)
             cur["end"] = start + len(line)
         elif stripped.endswith(":"):
-            # cau dan truoc mot danh sach, vd "Acute onset of:"
+            # a lead-in before a list, e.g. "Acute onset of:"
             lead_in = stripped
         else:
-            # doan van tho, chua thay bullet nao
+            # raw paragraph, no bullet seen yet
             cur = {"section": section, "start": start, "end": start + len(line),
                    "parts": [stripped], "lead_in": lead_in}
             blocks.append(cur)
 
-    # Neu tuyet nhien khong co bullet nao -> cat theo cau.
+    # If there's no bullet at all -> split by sentence.
     if not saw_bullet:
         out: list[Criterion] = []
         for b in blocks:
@@ -264,8 +266,8 @@ def segment_criteria(blob: str | None) -> tuple[list[Criterion], str]:
                 piece = piece.strip()
                 if len(piece) < MIN_CRITERION_CHARS:
                     continue
-                # Cat theo cau thi span cua block khong con dung cho tung cau,
-                # nen phai do lai vi tri that cua cau trong blob.
+                # Splitting by sentence invalidates the block's span for each
+                # piece, so re-locate each sentence's real position in the blob.
                 s, e = _locate(blob, b["start"], b["end"], piece)
                 out.append(Criterion(len(out), b["section"], piece, s, e, b["lead_in"]))
         return out, ("sentence_split" if out else "none")
@@ -294,7 +296,7 @@ def _text(root: ET.Element, path: str) -> str | None:
 
 
 def parse_trial(path: str) -> Trial | None:
-    """Doc mot file XML. Tra ve None neu file hong hoac thieu nct_id."""
+    """Read one XML file. Returns None if malformed or missing nct_id."""
     try:
         root = ET.parse(path).getroot()
     except ET.ParseError:

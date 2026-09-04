@@ -70,9 +70,22 @@ Smoke test: `PYTHONPATH=. .venv/bin/python -m src.retrieval.bm25 --index indexes
 
 ## Live demo
 
+Backend (`src/api/`) and frontend (`frontend/`) are separate deployables — split for independent
+hosting, since the backend needs a GPU-capable host with `data/`/`indexes/` on disk while the
+frontend is a plain static site that runs anywhere.
+
 ```bash
+# backend — needs the DB + both indexes built and GEMINI_API_KEY_* set
 PYTHONPATH=. .venv/bin/python -m uvicorn src.api.app:app --port 8000
+
+# frontend — any static file server; edit window.TRIALMATCH_API_BASE in
+# frontend/index.html first if the backend isn't on http://localhost:8000
+python -m http.server 8080 --directory frontend
 ```
-Runs the real pipeline live for any typed-in narrative, streaming progress over SSE. Needs the DB +
-both indexes built and `GEMINI_API_KEY_*` set. Rate-limited/budget-capped (`src/api/quota.py`) —
-it's a real quota consumer. Decision support only, never a bare "eligible".
+
+Runs the real pipeline live for any typed-in narrative, streaming progress over SSE.
+Rate-limited/budget-capped (`src/api/quota.py`) — it's a real quota consumer. CORS is open by
+default (`DEMO_CORS_ORIGINS` env var to restrict it). Decision support only, never a bare "eligible".
+
+`Dockerfile` (repo root) builds the backend for deployment elsewhere — see its header comment for
+the `docker build`/`docker run` commands and the volumes it expects (`data/`, `indexes/`).

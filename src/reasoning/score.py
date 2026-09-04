@@ -1,32 +1,15 @@
-"""Phase 8 buoc 6 — cham diem ba trang thai, va bac 5 tren thang ablation.
+"""Phase 8 step 6 — score the three-state output, and rung 5 on the ablation ladder.
 
     python -m src.reasoning.score --year 2021
     python -m src.reasoning.score --year 2021 --rule lenient --emit runs/elig.dev.txt
 
-MACRO-F1 MOT MINH LA GAMEABLE — LUON BAO CAO KEM HAI SO KIA
-------------------------------------------------------------
-Mot model tra loi `unverifiable` cho MOI tieu chi van co the dat macro-F1
-trong coi duoc, trong khi vo dung hoan toan. Vi vay bo ba luon di cung nhau:
-
-  * macro-F1 tren {satisfied, violated, unverifiable}
-  * TY LE KIENG (abstention) — bao nhieu phan tram tra loi `unverifiable`
-  * do chinh xac tren phan KHONG kieng
-
-Doc ba so nay cung luc thi khong the giau mot model chi biet noi "khong biet".
-
-KHONG CO NHAN VANG MUC TIEU CHI — NOI THANG DIEU DO
----------------------------------------------------
-qrels cua TREC chi co nhan muc TRIAL (0/1/2). Khong the cham truc tiep tung
-tieu chi. Nen o day dung duong (a) cua specs/08: gop quyet dinh tieu chi thanh
-quyet dinh trial roi doi chieu qrels. He qua phai noi ro: phep do nay do CA
-luat gop lan chat luong suy luan, khong tach duoc hai thu. Muon tach thi can
-bo nhan tu gan tay (duong (c)), la deliverable vuon toi chu chua co.
-
-CON SO TIEU DE LA CONTAMINATION@10, KHONG PHAI nDCG
-----------------------------------------------------
-Bac 5 co the lam nDCG chinh thuc GIAM ma van dung: qrels chinh thuc cho diem
-duong cho trial `excluded`, nen mot bo loc eligibility hoat dong TOT se bi tru
-diem o ho do do. Cai phai giam la contamination@10.
+Macro-F1 alone is gameable (answering `unverifiable` on everything scores
+tolerably while being useless), so it's always reported with the abstention
+rate and non-abstained accuracy. TREC qrels are trial-level only, so
+correctness here means criteria aggregated to a trial score checked against
+qrels — aggregation quality and reasoning quality aren't separable this way.
+Headline number is contamination@10, not nDCG: official nDCG can drop even
+when eligibility filtering works, since qrels score `excluded` trials positively.
 """
 
 from __future__ import annotations
@@ -42,15 +25,11 @@ from src.reasoning import aggregate, reason, schema
 
 
 def load_decisions(path: str, want_hash: str | None = None) -> dict:
-    """Doc mot file quyet dinh. `want_hash` KHONG phai tuy chon khi so sanh.
+    """Load one decisions file. `want_hash` is not optional when comparing.
 
-    `reason.load_cache` kiem `prompt_hash` truoc khi dung lai cache, nhung ham
-    nay truoc day thi khong — nen mot file cu con sot lai van duoc nap va dem
-    ra so sanh nhu that. Do la dieu vua xay ra: ablation lua chon ep buoc doc
-    phai ban 30/08 (hash ceb71ba6c6cb, DUY NHAT 1 ban ghi, prompt cu) va in ra
-    "hai trang thai F1=0.0000 acc=1.0000" — mot cap so vo nghia ma van trong
-    nhu ket qua. So sanh hai file sinh boi hai prompt khac nhau khong do duoc
-    gi ca.
+    Without checking the hash, a stale leftover file from a different
+    prompt/schema gets loaded and compared as if it were the same experiment —
+    comparing two different questions measures nothing.
     """
     blob = json.load(open(path, encoding="utf-8"))
     got = blob.get("prompt_hash")
@@ -75,16 +54,16 @@ def label_stats(decisions_by: dict) -> dict:
 
 
 def trial_level_eval(decisions_by: dict, qrels: dict, rule: str) -> dict:
-    """Gop len muc trial roi doi chieu qrels (duong (a) cua specs/08).
+    """Aggregate to trial level and check against qrels (specs/08 path (a)).
 
-    Nhan du doan: eligible neu diem gop > 0 (khong bi luat gop loai).
-    Nhan vang: ELIGIBLE(2) = 1, con lai = 0 — cung ban do voi eligible_only().
+    Predicted label: eligible if the aggregated score > 0 (not disqualified).
+    Gold label: ELIGIBLE(2) = 1, else 0 — same mapping as eligible_only().
     """
     tp = fp = fn = tn = 0
     for (tid, nct), ds in decisions_by.items():
         gold = qrels.get(tid, {}).get(nct)
         if gold is None:
-            continue                      # ngoai pool da cham, khong ket luan duoc
+            continue                      # outside the judged pool, no conclusion possible
         y = 1 if gold == data.ELIGIBLE else 0
         p = 1 if aggregate.trial_score(ds, rule) > 0 else 0
         if p and y:
@@ -154,10 +133,10 @@ def main() -> int:
     print("chi co nhan muc trial, khong tach duoc hai thu (specs/08 duong (a)).")
 
     if os.path.exists(forced_path):
-        # KHONG so voi blob['prompt_hash'] cua file KHONG-ep-buoc — hai file co
-        # prompt_hash KHAC NHAU CO CHU DICH (schema ep buoc bo nhan `unverifiable`
-        # khoi enum, xem schema.decision_schema(forced=True)). Phai tinh rieng
-        # hash MONG DOI cua chinh file ep buoc.
+        # Not compared against blob['prompt_hash'] of the non-forced file — the
+        # two deliberately have DIFFERENT hashes (forced schema drops
+        # `unverifiable` from the enum). Compute the forced file's own
+        # expected hash instead.
         want_forced_hash = schema.prompt_hash(True, args.mode == "trial")
         fdec, _ = load_decisions(forced_path, want_forced_hash)
         if len(fdec) < len(dec):

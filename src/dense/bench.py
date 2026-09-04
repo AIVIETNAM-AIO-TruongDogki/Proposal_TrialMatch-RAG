@@ -1,26 +1,23 @@
-"""Phase 5 buoc 3 — benchmark 3 encoder x 2 bien the tren SUBSAMPLE.
+"""Phase 5 step 3 — benchmark 3 encoders x 2 variants on a SUBSAMPLE.
 
-    python -m src.dense.bench --make-subsample     # tao danh sach id mot lan
-    python -m src.dense.bench --run                # ma hoa + cham diem
+    python -m src.dense.bench --make-subsample     # build the id list once
+    python -m src.dense.bench --run                # encode + score
 
-DIEM SUBSAMPLE BI THOI PHONG — KHONG BAO GIO DAT CANH SO CUA PHASE 3
----------------------------------------------------------------------
-Subsample = 26.162 trial da cham (2021) + 20.000 nhieu ngau nhien = 46.162 doc.
-Trial da cham chiem 57% subsample nhung chi 7% corpus that. It hon 8 lan nhieu
-thi MOI do do deu tang. Nhung con so o day chi de XEP HANG CAC UNG VIEN VOI
-NHAU, khong so voi 0.2399 cua Phase 3. So sanh voi Phase 3 chi hop le sau khi
-model thang cuoc duoc ma hoa tren TOAN corpus.
+Subsample scores are INFLATED — never compare them against Phase 3's number.
+Subsample = 26,162 judged trials (2021) + 20,000 random distractors = 46,162
+docs. Judged trials are 57% of the subsample but only 7% of the real corpus —
+8x less noise inflates every metric. These numbers only RANK candidates
+against each other, not against Phase 3's 0.2399; that comparison is only
+valid once the winning model is encoded on the FULL corpus. For an internal
+reference point, a BM25 run is also built on the SAME 46,162 docs — seconds
+to index, and shows dense vs. lexical under identical conditions.
 
-De co diem tham chieu noi bo, ta build luon mot run BM25 tren DUNG 46.162 doc
-do — vai giay index, va no cho biet dense hon/kem lexical TRONG CUNG dieu kien.
-
-COT QUYET DINH LA UNION-RECALL, KHONG PHAI nDCG
-------------------------------------------------
-Phase 3 dat Recall@1000 = 0.4176. Do la TRAN CUNG cho moi tang phia sau:
-rerank khong the cuu thu ma retrieval khong bao gio tra ve. Nen mot model
-thua BM25 ve nDCG@10 nhung tim ra 15% trial lien quan ma BM25 KHONG BAO GIO
-tra ve thi dang gia hon mot model hoa diem nhung tra ve cung tap tai lieu —
-Phase 6 tieu thu PHAN BU, khong tieu thu diem.
+The deciding column is UNION-RECALL, not nDCG. Phase 3 measured
+Recall@1000 = 0.4176 — a hard ceiling for every later stage: reranking can't
+save a trial retrieval never returns. So a model that loses on nDCG@10 but
+finds 15% of relevant trials BM25 never returns is worth more than a model
+that scores higher while returning the same document set — Phase 6 consumes
+COMPLEMENTARITY, not score.
 """
 
 from __future__ import annotations
@@ -33,9 +30,9 @@ import subprocess
 import sys
 import time
 
-# Phai dat TRUOC moi import torch (ke ca gian tiep qua sentence-transformers).
-# Lan chay dau chet OOM voi "1.73 GiB is reserved by PyTorch but unallocated" —
-# phan manh, dung truong hop cai nay xu ly.
+# Must be set BEFORE any torch import (including indirectly via
+# sentence-transformers). The first run OOM'd with "1.73 GiB is reserved by
+# PyTorch but unallocated" — fragmentation, exactly what this setting fixes.
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 from src.eval import data, metrics, run_io
@@ -49,7 +46,7 @@ VARIANTS = ("base", "crit")   # KHONG dung crit_x3 — xem specs/05
 
 
 def make_subsample(year: int = 2021, db: str = "data/trials.db") -> int:
-    """26.162 trial da cham + 20.000 nhieu ngau nhien, seed co dinh."""
+    """26,162 judged trials + 20,000 random distractors, fixed seed."""
     import sqlite3
     qrels = data.load_qrels(year)
     judged = {d for v in qrels.values() for d in v}
@@ -70,9 +67,9 @@ def make_subsample(year: int = 2021, db: str = "data/trials.db") -> int:
 
 
 def union_recall(run_a: dict, run_b: dict, qrels: dict, k: int = 1000) -> dict:
-    """Phan bu giua hai run: A tim duoc gi ma B khong, va nguoc lai.
+    """Complementarity between two runs: what A finds that B doesn't, and vice versa.
 
-    Chi dem trial ELIGIBLE — do la thu Phase 8 can, va la thu ca de tai do.
+    Counts only ELIGIBLE trials — what Phase 8 needs, and what this project measures.
     """
     only_a = only_b = both = gold_tot = 0
     for tid, docs in qrels.items():
@@ -91,7 +88,7 @@ def union_recall(run_a: dict, run_b: dict, qrels: dict, k: int = 1000) -> dict:
 
 
 def bm25_subsample_run(year: int, out: str) -> str:
-    """Run BM25 tren DUNG cung 46.162 doc — diem tham chieu noi bo."""
+    """Run BM25 on the SAME 46,162 docs — internal reference point."""
     if os.path.exists(out):
         return out
     idx = "indexes/bm25-sub"
@@ -123,15 +120,15 @@ def bm25_subsample_run(year: int, out: str) -> str:
     return out
 
 
-# --- Tich luy ket qua qua NHIEU tien trinh ------------------------------------
+# --- Accumulate results ACROSS PROCESSES --------------------------------------
 #
-# Moi to hop (model, bien the) chay trong MOT TIEN TRINH RIENG: tien trinh moi =
-# GPU sach tuyet doi, khong mang phan manh sang. Lan chay gop 6 to hop trong mot
-# tien trinh da chet OOM ngay o to hop thu hai. Nap lai model mat ~30 giay so voi
-# 16 phut ma hoa — khong dang ke.
+# Each (model, variant) pair runs in ITS OWN PROCESS: a fresh process means a
+# truly clean GPU, no carried-over fragmentation. Bundling 6 pairs into one
+# process OOM'd on the second pair. Reloading a model costs ~30s against
+# 16min of encoding — negligible.
 #
-# Doi lai, file ket qua phai GOP chu khong ghi de, neu khong moi tien trinh se
-# xoa ket qua cua tien trinh truoc va bang tong chi con mot dong.
+# In exchange, the results file must be MERGED, not overwritten, or each
+# process would erase the previous one's results, leaving only one row.
 
 def results_path(year: int) -> str:
     return f"results/_dense_bench.{year}.json"
@@ -145,7 +142,7 @@ def load_rows(year: int) -> list[dict]:
 
 
 def merge_row(year: int, row: dict) -> list[dict]:
-    """Thay dong cu cung (model, variant) roi ghi lai ca file."""
+    """Replace the existing (model, variant) row and rewrite the whole file."""
     rows = [r for r in load_rows(year)
             if (r["model"], r["variant"]) != (row["model"], row["variant"])]
     rows.append(row)
@@ -191,8 +188,8 @@ def main() -> int:
     ap.add_argument("--report", action="store_true",
                     help="chi in bang tong tu ket qua da tich luy, khong chay gi")
     ap.add_argument("--year", type=int, default=data.DEV_YEAR, choices=[2021])
-    # `gemini` KHONG mac dinh: quota embedding dem theo tung VAN BAN (100/phut),
-    # nen ma hoa subsample mat 8,3 gio va toan corpus 67 gio — xem encode.py.
+    # `gemini` not in the default: embedding quota counts per TEXT (100/min),
+    # so encoding the subsample takes 8.3h and the full corpus 67h — see encode.py.
     ap.add_argument("--models", default="bge-m3,qwen3,medcpt")
     ap.add_argument("--variants", default=",".join(VARIANTS))
     ap.add_argument("--device", default="cuda")
@@ -239,18 +236,20 @@ def main() -> int:
                 encode.save(vec, ids, V, owner, encode.MODELS[mk])
                 del enc, V, owner
             else:
-                # Giu lai so do cu thay vi bo trong: lan chay lai chi de cham
-                # diem, nhung cot s/doc la du lieu quyet dinh cho buoc ma hoa
-                # toan corpus, mat no la phai ma hoa lai chi de do gio.
+                # Keep the old timing instead of leaving it blank: a rerun
+                # that's only rescoring shouldn't lose the s/doc data the
+                # full-corpus encoding decision depends on, or it would have
+                # to re-encode just to time it.
                 sec_per_doc = prev.get((mk, variant), {}).get("sec_per_doc")
                 print(f"\n== {tag} da co vector, bo qua ma hoa ==")
             if args.device.startswith("cuda"):
                 torch.cuda.empty_cache()
 
             run = search.search(vec, mk, topics, 1000, args.device)
-            # search() nap encoder va day ca ma tran len GPU. Khong don o day
-            # thi phan manh cong don qua tung vong lap va model sau OOM — dung
-            # cach lan chay dau chet o to hop thu hai.
+            # search() loads the encoder and pushes the whole matrix to the
+            # GPU. Without clearing here, fragmentation accumulates across
+            # loop iterations and the next model OOMs — exactly how the first
+            # run died on the second pair.
             if args.device.startswith("cuda"):
                 torch.cuda.empty_cache()
             run_path = f"runs/_sub_{tag}.dev.txt"

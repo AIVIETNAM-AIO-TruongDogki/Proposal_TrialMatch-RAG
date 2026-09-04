@@ -1,43 +1,34 @@
-"""Phase 5 buoc 1 — bon encoder, bon cong thuc RIENG, cung mot cach cat chunk.
+"""Phase 5 step 1 — four encoders, four RECIPES, one shared chunking scheme.
 
-    python -m src.dense.encode --self-test          # BAT BUOC chay truoc
+    python -m src.dense.encode --self-test          # run this FIRST
     python -m src.dense.encode --model bge-m3 --input data/jsonl/base --out ...
 
-MOI MODEL MOT CONG THUC — THEO CARD CUA CHINH TAC GIA
------------------------------------------------------
-`bge-m3` va `qwen3` di qua sentence-transformers `encode_query/encode_document`:
-hai ham do doc `config_sentence_transformers.json` cua chinh model va tu ap
-prompt/prefix dung cach. Tu truyen prompt_name bang tay la doan thay tac gia.
+One recipe per model, per its own model card:
+`bge-m3`/`qwen3` go through sentence-transformers' encode_query/encode_document,
+which read the model's own config and apply the right prompt/prefix automatically.
 
-`medcpt` KHONG dung sentence-transformers: card cua no quy dinh pooling CLS
-tho (`last_hidden_state[:,0,:]`), KHONG normalize. Goi qua ST se lam mean
-pooling va normalize -> sai ca hai, khong nem loi nao, chi ra diem thap.
+`medcpt` does NOT use sentence-transformers: its card mandates raw CLS pooling
+(`last_hidden_state[:,0,:]`), no normalization. Calling it through ST would
+silently mean-pool and normalize instead — wrong on both counts, no error,
+just a low score. It's also TWO separate models (query encoder, article
+encoder); `_MedCPT.encode_query/document` call different models, and
+`--self-test` verifies they actually are different.
 
-`gemini` di qua API (khong dung GPU), va cung BAT DOI XUNG: task_type phai la
-RETRIEVAL_QUERY cho benh an, RETRIEVAL_DOCUMENT cho trial. Day la ung vien
-THU TU, cong them vao phep so sanh chu khong thay the ba encoder kia — cau hoi
-cua specs/05 la "model y sinh co thang model tong quat khong", va bo BGE-M3
-voi MedCPT di thi khong con cau hoi do nua.
+`gemini` goes through the API (no GPU) and has its own asymmetry: task_type
+must be RETRIEVAL_QUERY for narratives, RETRIEVAL_DOCUMENT for trials. It's a
+4th comparison point, not a replacement for the other three — specs/05 asks
+whether biomedical models beat general-purpose ones, and dropping BGE-M3/MedCPT
+would erase that question.
 
-MEDCPT BAT DOI XUNG — KHANG DINH BANG CODE, KHONG DUA VAO CAN THAN
-------------------------------------------------------------------
-MedCPT la HAI model: Query-Encoder cho benh an, Article-Encoder cho trial.
-Dung nham mot encoder cho ca hai phia se lam diem tut va dan thang toi ket
-luan "model y sinh thua model tong quat" — dung dieu Phase 5 sinh ra de KIEM
-CHUNG chu khong phai de gia dinh. Vi vay `_MedCPT.encode_query/document` goi
-hai model khac nhau va `--self-test` kiem tra chung khong phai mot.
+Deliberate deviation from MedCPT's card: it uses max_length=64 for queries
+(PubMed queries are short); ours are ~200 tokens, so 512 (the model's
+positional limit) is used instead. Logged in docs/decisions/phase5-dense.md.
 
-LECH CO Y SO VOI CARD: card MedCPT dung max_length=64 cho query vi truy van
-PubMed ngan. Benh an cua ta ~200 token, nen dung 512 (gioi han positional cua
-model). Ghi trong docs/decisions/phase5-dense.md.
-
-CAT CHUNK THEO TU, KHONG THEO TOKEN
-------------------------------------
-320 tu, chong lan 40, diem = MAX qua cac chunk. Bon encoder co bon tokenizer
-khac nhau (XLM-R / BERT / Qwen / Gemini); cat theo token cua tung model se tao
-ra bon tap chunk khac nhau va phep so sanh chay tren bon bo du lieu khac nhau.
-Ranh gioi tu thi giong het nhau THEO DINH NGHIA. 320 tu ~ 420 token van ban
-lam sang, an toan duoi tran 512 cua MedCPT.
+Chunking is by WORD, not by token: 320 words, 40 overlap, score = MAX across
+chunks. Four encoders have four different tokenizers (XLM-R/BERT/Qwen/Gemini)
+— chunking by each model's own tokens would create four different chunk sets,
+comparing four different datasets. Word boundaries are identical by
+definition. 320 words ~ 420 clinical tokens, safely under MedCPT's 512 cap.
 """
 
 from __future__ import annotations
@@ -62,33 +53,24 @@ MODELS = {
     "gemini": "gemini-embedding-001",
 }
 
-# API EMBEDDING: DUNG DUOC NHUNG KHONG DU NHANH CHO CORPUS NAY
-# -------------------------------------------------------------
-# Gioi han do thuc te, khong doan:
-#   * toi da 100 van ban moi lan goi (250 -> 400 INVALID_ARGUMENT)
-#   * quota EmbedContentRequestsPerMinutePerUserPerProjectPerModel = 100/phut
-#
-# CAI BAY: quota do dem theo TUNG VAN BAN, khong phai theo lan goi. Chinh loi
-# 400 cua API noi ro dieu do — "BatchEmbedContentsRequest.requests: at most 100
-# requests" — no goi moi van ban la mot "request". Da xac nhan bang thuc nghiem:
-# 6 lan goi dong thoi (moi lan 100 van ban) thi 5 dinh 429 ngay lap tuc.
-#
-# Vi vay thong luong that la 100 VAN BAN/phut:
-#     subsample  49.652 chunk  ->  8,3 gio
-#     toan corpus ~400.000 chunk -> 67 gio
-# so voi GPU: 16 phut va ~2 gio. Cham hon 30 lan.
-#
-# Ket luan: `gemini` KHONG nam trong danh sach mac dinh cua bench.py. Code duoc
-# giu lai vi no dung va se kha thi ngay khi len goi tra phi — chay bang
-#     --models gemini
-# Dung cho ma hoa TRUY VAN (75 cai) thi hoan toan on; chi ma hoa CORPUS moi tac.
+# API embedding works but isn't fast enough for this corpus. Measured limits:
+#   * max 100 texts/call (250 -> 400 INVALID_ARGUMENT)
+#   * quota EmbedContentRequestsPerMinutePerUserPerProjectPerModel = 100/min
+# Trap: the quota counts per TEXT, not per call — confirmed by the API's own
+# 400 error text ("at most 100 requests") and empirically (6 concurrent
+# 100-text calls -> 5 immediate 429s). Real throughput is 100 texts/minute:
+#     subsample  49,652 chunks -> 8.3h;  full corpus ~400,000 chunks -> 67h
+# vs. GPU: 16min and ~2h — 30x slower. So `gemini` is excluded from
+# bench.py's default model list (code kept — viable once on a paid tier, via
+# `--models gemini`). Fine for encoding QUERIES (75 of them); only encoding
+# the CORPUS is the bottleneck.
 GEMINI_EMBED_BATCH = 100
 GEMINI_CONCURRENCY = 4
 
 
 def chunk_words(text: str, size: int = CHUNK_WORDS,
                 overlap: int = CHUNK_OVERLAP) -> list[str]:
-    """Cat theo tu. Tra ve it nhat mot chunk (co the rong) de moi doc luon co vector."""
+    """Split by word. Always returns at least one chunk (possibly empty), so every doc gets a vector."""
     w = text.split()
     if len(w) <= size:
         return [" ".join(w)]
@@ -98,27 +80,27 @@ def chunk_words(text: str, size: int = CHUNK_WORDS,
 
 
 class _ST:
-    """bge-m3 / Qwen3-Embedding — de sentence-transformers tu ap cong thuc."""
+    """bge-m3 / Qwen3-Embedding — let sentence-transformers apply the recipe."""
 
-    BATCH = BATCH   # gioi han bo nho GPU
+    BATCH = BATCH   # GPU memory limit
 
     def __init__(self, name: str, device: str = "cuda"):
         from sentence_transformers import SentenceTransformer
         self.m = SentenceTransformer(name, device=device,
                                      model_kwargs={"dtype": "float16"})
         self.name = name
-        # Qwen3-Embedding la DECODER 0,6B, ton bo nho hon nhieu so voi encoder
-        # 568M cua bge-m3: o BATCH=32 no OOM tren GPU 7,62 GB. Ghi de o muc
-        # INSTANCE vi hai model dung chung lop nay.
+        # Qwen3-Embedding is a 0.6B DECODER, far more memory-hungry than
+        # bge-m3's 568M encoder: at BATCH=32 it OOMs on a 7.62GB GPU.
+        # Overridden at the INSTANCE level since both models share this class.
         #
-        # An toan cho tinh so sanh: encoder xu ly tung van ban DOC LAP, khong co
-        # attention cheo giua cac van ban trong batch — doi batch chi doi toc do,
-        # khong doi vector. Chenh lech toc do van hien trung thuc o cot s/doc.
+        # Safe for comparability: each text is encoded INDEPENDENTLY, no
+        # cross-attention within a batch — changing batch size changes speed,
+        # not the vector. The speed difference still shows honestly in s/doc.
         self.BATCH = 8 if "Qwen3" in name else BATCH
 
-    # bs=None -> lay self.BATCH. Khong dat mac dinh la hang BATCH o day: gia tri
-    # mac dinh duoc chot luc DINH NGHIA lop, nen no se bo qua ghi de instance
-    # cua qwen3 va OOM o duong goi khong truyen bs (vi du search.encode_query).
+    # bs=None -> use self.BATCH. Not defaulted to the BATCH constant here: a
+    # default is fixed at class DEFINITION time, so it would bypass qwen3's
+    # instance override and OOM on any call that omits bs (e.g. search.encode_query).
     def encode_query(self, texts: list[str], bs: int | None = None) -> np.ndarray:
         return self.m.encode_query(texts, batch_size=bs or self.BATCH,
                                    convert_to_numpy=True,
@@ -133,10 +115,10 @@ class _ST:
 
 
 class _MedCPT:
-    """MedCPT — hai model, CLS tho, khong normalize. Xem docstring module."""
+    """MedCPT — two models, raw CLS, no normalization. See module docstring."""
 
-    MAX_LEN = 512  # lech co y so voi card (64)
-    BATCH = BATCH  # gioi han bo nho GPU
+    MAX_LEN = 512  # deliberate deviation from the card (64)
+    BATCH = BATCH  # GPU memory limit
 
     def __init__(self, pair: str, device: str = "cuda"):
         import torch
@@ -157,7 +139,7 @@ class _MedCPT:
             enc = tok(texts[i:i + bs], truncation=True, padding=True,
                       max_length=self.MAX_LEN, return_tensors="pt").to(self.device)
             with self.torch.no_grad():
-                h = mod(**enc).last_hidden_state[:, 0, :]  # CLS tho, khong normalize
+                h = mod(**enc).last_hidden_state[:, 0, :]  # raw CLS, no normalization
             out.append(h.float().cpu().numpy())
         return np.concatenate(out) if out else np.zeros((0, 768), dtype=np.float32)
 
@@ -169,20 +151,20 @@ class _MedCPT:
 
 
 class _GeminiEmbed:
-    """gemini-embedding-001 qua API — khong dung GPU.
+    """gemini-embedding-001 via API — no GPU.
 
-    BAT DOI XUNG GIONG MEDCPT, va cung de sai am tham y het:
-    `task_type` phai la RETRIEVAL_QUERY cho benh an va RETRIEVAL_DOCUMENT cho
-    trial. Dung nham mot task_type cho ca hai phia khong nem loi nao — no chi
-    lam diem tut, dung kieu loi ma cong --self-test sinh ra de bat.
+    Asymmetric like MedCPT, and just as silently wrong if mishandled:
+    task_type must be RETRIEVAL_QUERY for narratives, RETRIEVAL_DOCUMENT for
+    trials. Using the wrong one for one side raises no error, just a lower
+    score — exactly the class of bug --self-test exists to catch.
 
-    Xoay vong key va ton trong retryDelay dung theo co che cua
-    src/extraction/gemini.py, khong viet lai.
+    Key rotation and retryDelay reuse src/extraction/gemini.py's mechanism
+    rather than reimplementing it.
     """
 
-    # 100 = muc TOI DA API cho phep. Voi API, batch la chuyen so REQUEST chu
-    # khong phai bo nho GPU, nen dung 32 nhu hai encoder kia se ton gap 3 lan
-    # so request ma khong duoc gi.
+    # 100 = the API's max allowed. For an API, batch size is a REQUEST-count
+    # question, not GPU memory — using 32 like the other encoders would
+    # triple the request count for nothing.
     BATCH = GEMINI_EMBED_BATCH
 
     def __init__(self, name: str, device: str = "cuda"):
@@ -198,7 +180,7 @@ class _GeminiEmbed:
         from google.genai import errors, types
         for _ in range(len(self.gem.KEYS)):
             key = next(self.gem._cycle)
-            client = self.genai.Client(api_key=key)   # giu tham chieu song
+            client = self.genai.Client(api_key=key)   # kept alive
             try:
                 r = client.models.embed_content(
                     model=self.name, contents=chunk,
@@ -212,17 +194,17 @@ class _GeminiEmbed:
         raise RuntimeError(f"embed: het {len(self.gem.KEYS)} key deu loi")
 
     def _embed(self, texts: list[str], task: str, bs: int = GEMINI_EMBED_BATCH):
-        """Goi SONG SONG — do thuc te: mot request 100 van ban mat ~23 giay.
+        """Calls IN PARALLEL — measured: one 100-text request takes ~23s.
 
-        Quota la 100 request/PHUT, nhung chay tuan tu chi dat ~2,6 request/phut
-        vi do tre chiem het thoi gian. Rang buoc that la DO TRE, khong phai
-        quota — nen phai goi dong thoi moi dung het phan quota da duoc cap.
-        Giu thu tu ket qua bang cach danh so mieng, khong dua vao thu tu hoan
-        thanh cua cac luong.
+        Quota is 100 requests/MINUTE, but sequential calls only reach
+        ~2.6/minute because latency eats the time. The real constraint is
+        LATENCY, not quota — concurrency is required to actually use the
+        quota granted. Result order is kept by numbering pieces, not by
+        thread completion order.
         """
         from concurrent.futures import ThreadPoolExecutor
 
-        pieces = [[t or " " for t in texts[i:i + bs]]      # API tu choi chuoi rong
+        pieces = [[t or " " for t in texts[i:i + bs]]      # API rejects empty strings
                   for i in range(0, len(texts), bs)]
         if not pieces:
             return np.zeros((0, 3072), dtype=np.float32)
@@ -232,9 +214,10 @@ class _GeminiEmbed:
         out = [v for r in results for v in r]
         return np.asarray(out, dtype=np.float32)
 
-    # bs bi BO QUA co y: voi API, batch la chuyen so request chu khong phai
-    # chuyen bo nho GPU, nen luon dung muc toi da 100 cho phep. Nhan tham so de
-    # giu cung chu ky voi hai encoder kia.
+    # bs is deliberately IGNORED: for an API, batch size is a request-count
+    # question, not GPU memory, so it always uses the max allowed (100).
+    # Accepted as a parameter only to keep the same call signature as the
+    # other encoders.
     def encode_query(self, texts: list[str], bs: int = GEMINI_EMBED_BATCH) -> np.ndarray:
         return self._embed(texts, "RETRIEVAL_QUERY")
 
@@ -251,7 +234,7 @@ def load_encoder(key: str, device: str = "cuda"):
     return _ST(name, device)
 
 
-# --- Cong kiem tra truoc khi ma hoa bat cu thu gi -----------------------------
+# --- Sanity check before encoding anything -----------------------------------
 
 _PARA_A = "The patient is a 45-year-old man with anaplastic astrocytoma of the spine."
 _PARA_B = "A 45-year-old male presenting with spinal anaplastic astrocytoma."
@@ -259,10 +242,10 @@ _UNREL = "Randomized trial of dietary sodium reduction in healthy adolescents."
 
 
 def self_test(device: str = "cuda") -> bool:
-    """Ma hoa mot cap dien dat lai + mot cap khong lien quan, doi sim(para) > sim(unrel).
+    """Encode a paraphrase pair + an unrelated pair, expect sim(para) > sim(unrel).
 
-    Loi pooling KHONG nem ngoai le — no chi lam model do trong nhu kem. Hai
-    giay o day re hon sau lan chay ma hoa hong.
+    A pooling bug raises no exception — it just makes the model look bad.
+    Two seconds here is cheaper than an hour of encoding gone wrong.
     """
     ok_all = True
     for key in MODELS:
@@ -289,11 +272,11 @@ def self_test(device: str = "cuda") -> bool:
     return ok_all
 
 
-# --- Ma hoa mot tap JSONL ----------------------------------------------------
+# --- Encode one JSONL directory ----------------------------------------------
 
 def read_jsonl_dir(d: str, keep: set[str] | None = None,
                    shard: int | None = None) -> tuple[list[str], list[str]]:
-    """shard=N chi doc docs{N:02d}.jsonl. Xem `shard_path`/`merge_shards`."""
+    """shard=N reads only docs{N:02d}.jsonl. See `shard_path`/`merge_shards`."""
     ids, texts = [], []
     files = sorted(f for f in os.listdir(d) if f.endswith(".jsonl"))
     if shard is not None:
@@ -316,10 +299,10 @@ def read_jsonl_dir(d: str, keep: set[str] | None = None,
 
 def encode_docs(enc, ids: list[str], texts: list[str], bs: int | None = None
                 ) -> tuple[np.ndarray, np.ndarray]:
-    """Tra ve (vectors cua TUNG CHUNK, chi so doc cua tung chunk).
+    """Returns (per-CHUNK vectors, each chunk's owning doc index).
 
-    Giu o muc chunk thay vi gop san: diem cuoi la MAX qua chunk, ma max phai
-    tinh sau khi nhan voi truy van, khong phai truoc.
+    Kept at chunk granularity rather than pre-pooled: the final score is MAX
+    across chunks, computed after the query dot-product, not before.
     """
     bs = bs or getattr(enc, "BATCH", BATCH)
     chunks, owner = [], []
@@ -342,15 +325,16 @@ def encode_docs(enc, ids: list[str], texts: list[str], bs: int | None = None
     return V, np.asarray(owner, dtype=np.int32)
 
 
-# --- Ma hoa theo shard, co checkpoint ----------------------------------------
+# --- Sharded encoding, with checkpointing ------------------------------------
 #
-# VI SAO CAN: ma hoa toan corpus mat ~3,5 gio va `encode_docs` chi ghi dia MOT
-# LAN o cuoi — mot lan chet la mat ca lượt. Ngoai ra no giu toan bo vector fp32
-# trong RAM roi `np.concatenate` tao ban sao thu hai: 406k chunk x 1024 x 4 byte
-# = 1,66 GB x2, cong ban fp16 nua, dinh ~4,8 GB tren may chi con 8 GB kha dung.
+# WHY: encoding the full corpus takes ~3.5h and `encode_docs` only writes to
+# disk ONCE at the end — one crash loses the whole run. It also keeps every
+# fp32 vector in RAM, and np.concatenate makes a second copy: 406k chunks x
+# 1024 x 4 bytes = 1.66GB x2, plus the fp16 copy, peaking ~4.8GB on an 8GB
+# machine.
 #
-# Chia theo shard giai quyet ca hai: dinh RAM xuong ~1 GB va moi shard duoc luu
-# ngay khi xong. `data/jsonl/*` von da chia san 4 shard 100.000 doc.
+# Sharding fixes both: peak RAM drops to ~1GB, and each shard saves as soon
+# as it's done. `data/jsonl/*` is already split into 4 shards of 100,000 docs.
 
 def shard_path(out: str, shard: int) -> str:
     base = out[:-4] if out.endswith(".npz") else out
@@ -358,12 +342,12 @@ def shard_path(out: str, shard: int) -> str:
 
 
 def merge_shards(out: str, model: str, keep_shards: bool = False) -> int:
-    """Gop cac file shard thanh mot .npz duy nhat.
+    """Merge shard files into one .npz.
 
-    CHO DE SAI DUY NHAT: `owner` la chi so tai lieu CUC BO trong tung shard. Noi
-    thang se lam moi chunk cua shard 1..3 tro ve tai lieu cua shard 0 — khong nem
-    ngoai le, chi lam diem so sai theo kieu van trong hop ly. Phai cong don so
-    tai lieu cua cac shard truoc.
+    THE ONE EASY BUG: `owner` is a LOCAL doc index within each shard.
+    Concatenated directly, every chunk in shards 1..3 would point back to
+    shard 0's documents — no exception, just a plausible-looking wrong score.
+    Each shard's doc count must be offset first.
     """
     base = out[:-4] if out.endswith(".npz") else out
     paths = sorted(glob.glob(f"{base}.shard*.npz"))
@@ -377,7 +361,7 @@ def merge_shards(out: str, model: str, keep_shards: bool = False) -> int:
         z = np.load(p, allow_pickle=True)
         sid = list(z["ids"])
         vecs.append(z["vecs"])
-        owners.append(z["owner"].astype(np.int64) + off)   # <- offset, khong noi thang
+        owners.append(z["owner"].astype(np.int64) + off)   # <- offset, never raw
         ids_all.extend(sid)
         off += len(sid)
         print(f"  {os.path.basename(p):40s} {len(sid):7,} doc  {z['vecs'].shape[0]:7,} chunk"

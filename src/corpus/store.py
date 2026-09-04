@@ -1,8 +1,8 @@
-"""API doc canonical store.
+"""Canonical read store.
 
-Moi tang phia sau (retrieval, reranking, reasoning, generation) doc trial qua
-day, khong doc lai XML. Sau Phase 1 thi `rawdata/` va chi muc nct_id -> path
-deu khong con duoc dung luc chay nua.
+Every downstream stage (retrieval, reranking, reasoning, generation) reads
+trials through here, never the raw XML — after Phase 1, `rawdata/` and the
+nct_id -> path index are no longer touched at runtime.
 """
 
 from __future__ import annotations
@@ -12,14 +12,12 @@ import sqlite3
 
 def open_db(path: str = "data/trials.db", check_same_thread: bool = True
            ) -> sqlite3.Connection:
-    """`check_same_thread=False` — can cho Phase 10: server song goi cac ham
-    doc-chi (get_trial/get_criteria/...) tu nhieu asyncio.to_thread() dong
-    thoi tren MOT connection. SQLite bien dich mac dinh o che do "serialized"
-    (SQLITE_THREADSAFE=1) nen ban than thu vien da tu khoa noi bo — chia se
-    mot connection giua nhieu thread la AN TOAN ve du lieu, chi mat song song
-    that su (cac lenh xep hang cho nhau), khong dang ke voi truy van diem theo
-    khoa chinh nhu o day. Cac script batch (mot tien trinh, mot luong) khong
-    doi hanh vi mac dinh.
+    """`check_same_thread=False` is for Phase 10: the live server calls
+    read-only functions from multiple asyncio.to_thread() calls on one
+    connection. SQLite's default "serialized" mode already locks internally,
+    so sharing a connection across threads is data-safe — it only loses true
+    parallelism (queries queue), negligible for point lookups by primary key.
+    Batch scripts (one process, one thread) keep the default.
     """
     conn = sqlite3.connect(path, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
@@ -53,11 +51,11 @@ def get_criteria(conn: sqlite3.Connection, nct_id: str,
 
 
 def retrieval_text(trial: dict) -> str:
-    """Van ban dung de index (lexical + dense).
+    """Text used for indexing (lexical + dense).
 
-    CHU Y: khong gop criteria_raw vao day. Text criteria rat dai va day phu
-    dinh, de nhan chim tin hieu chu de. Neu muon gop thi phai lam thanh mot
-    run RIENG de ablate o Phase 5/6, khong sua ham nay.
+    Deliberately excludes criteria_raw — criteria text is long and
+    negation-heavy, drowning out topical signal. Including it should be a
+    separate run to ablate in Phase 5/6, not a change to this function.
     """
     parts = [trial.get("title"), trial.get("summary")]
     for key in ("conditions", "interventions", "mesh", "keywords"):
@@ -67,14 +65,12 @@ def retrieval_text(trial: dict) -> str:
 
 
 def verify_quote(conn: sqlite3.Connection, nct_id: str, idx: int, quote: str) -> bool:
-    """Cau `quote` do LLM trich co that su nam trong criterion do khong?
+    """Is the LLM-extracted `quote` actually inside that criterion's text?
 
-    Day la cach bien invariant 3 tu mot loi hua thanh mot phep do. Phase 8
-    goi ham nay tren moi criterion_quote; ty le that bai chinh la ty le
-    ungrounded, va no la mot con so bao cao duoc.
-
-    So khop sau khi chuan hoa khoang trang, vi criterion goc bi wrap cung
-    con LLM tra ve mot dong lien.
+    Turns invariant 3 from a promise into a measurement: Phase 8 calls this
+    on every criterion_quote, and the failure rate is the ungrounded rate, a
+    reportable number. Matched after whitespace normalization, since the
+    source criterion is wrapped while the LLM returns one line.
     """
     row = conn.execute(
         "SELECT text FROM criteria WHERE nct_id = ? AND idx = ?", (nct_id, idx)
@@ -86,9 +82,9 @@ def verify_quote(conn: sqlite3.Connection, nct_id: str, idx: int, quote: str) ->
 
 
 def criterion_source(conn: sqlite3.Connection, nct_id: str, idx: int) -> str | None:
-    """Doan van goc (chua chuan hoa khoang trang) ma criterion nay duoc cat ra.
+    """The raw (unnormalized) span this criterion was cut from.
 
-    Dung khi can trung bay bang chung nguyen ban cho nguoi doc kiem tra.
+    Used to display the original evidence text for a reader to check.
     """
     row = conn.execute(
         "SELECT t.criteria_raw, c.span_start, c.span_end "

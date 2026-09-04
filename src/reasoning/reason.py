@@ -1,33 +1,15 @@
-"""Phase 8 buoc 2 — chay suy luan eligibility muc tieu chi.
+"""Phase 8 step 2 — run per-criterion eligibility reasoning.
 
-    # smoke test: 1 topic x 2 trial, vai lan goi
+    # smoke test
     python -m src.reasoning.reason --limit-topics 1 --top-n 2
 
-    # chay that (KHONG chay khi chua co quota — xem canh bao ben duoi)
+    # real run — check --estimate first, quota is limited
     python -m src.reasoning.reason --run runs/bm25_best.dev.txt --top-n 20
 
-HAI CHE DO GOI — SPEC YEU CAU DO CA HAI
-----------------------------------------
---mode trial     gop CA TRIAL vao mot lan goi (~18 tieu chi).   1.500 lan goi
---mode criterion goi tung tieu chi mot.                        27.045 lan goi
-
-Che do `trial` re hon 18 lan nhung danh cuoc rang model khong lac giua 18 tieu
-chi trong mot prompt. Che do `criterion` dat hon nhung moi lan goi chi phai
-tra loi dung mot cau hoi. Do ca hai roi hay chon, dung doan.
-
-QUY MO — DOC TRUOC KHI CHAY
-----------------------------
-75 topic x top-20 x 18,0 tieu chi/trial = 27.045 lan goi (do that tren
-runs/bm25_best.dev.txt, khong phai uoc luong). Han ngach free tier do duoc la
-20 request/ngay/model TREN 3.6-flash. Model dang dung (3.5-flash-lite) co han
-ngach rieng va cao hon — xem `--estimate`.
-`--estimate` in ra so lan goi va dung lai, khong goi gi ca.
-
-CACHE
------
-Khoa (topic_id, nct_id, criterion_idx) + prompt_hash. Loi ha tang KHONG duoc
-ghi cache (lan chay sau tu thu lai); dau ra sai dinh dang thi CO ghi, vi chay
-lai cung dau vao hiem khi tu sua. Giong het extract.py.
+Two call modes: `trial` batches all of a trial's criteria into one call
+(~1,500 calls); `criterion` calls one at a time (~27,045 calls) — cheaper
+per-criterion accuracy at 18x the cost. `--estimate` prints call counts and
+exits without calling anything.
 """
 
 from __future__ import annotations
@@ -46,16 +28,15 @@ from src.reasoning import schema, verify
 OUT_DIR = "data/reasoning"
 TOP_N = 20
 
-# Do bang thuc nghiem: Gemini tra 400 INVALID_ARGUMENT khi mot lan goi mang
-# ~40 tieu chi tro len (n=35 con chay, n=40 hong). Khong phai gioi han token —
-# la gioi han do PHUC TAP cua response_schema (minItems/maxItems lon + object
-# long nhau). 30 la nguong an toan co bien. 10,3% trial trong top-20 co hon 30
-# tieu chi (toi da 76), nen chia nho la BAT BUOC, khong phai toi uu.
+# Measured empirically: Gemini 400s on ~40+ criteria per call (35 still works,
+# 40 fails) — not a token limit but response_schema complexity (large
+# minItems/maxItems + nested objects). 30 is a safe margin; 10.3% of top-20
+# trials have more than 30 criteria (max 76), so splitting is mandatory.
 MAX_CRIT_PER_CALL = 30
 
-# So loi LIEN TIEP truoc khi coi la "nguon da can" chu khong phai truc trac le.
-# 5 la du: mot 429 rai rac thi khoa ke tiep trong vong xoay se nhan viec, nen
-# 5 cap lien tiep hong ca 3 khoa co nghia la ca ba du an deu het han ngach.
+# Consecutive failures, not sporadic ones, mean the quota is exhausted. 5 is
+# enough: a stray 429 gets picked up by the next key in rotation, so 5
+# straight failures across all 3 keys means all 3 projects are out.
 MAX_CONSECUTIVE_FAILS = 5
 
 
@@ -66,13 +47,11 @@ def cache_path(year: int, model: str, mode: str, forced: bool,
 
 
 def load_cache(path: str, ph: str) -> dict:
-    """Cache la tai san DAT NHAT trong Phase 8 — 1.461 loi goi = mot ngay han ngach.
+    """Load the cache. A malformed file is never treated as an empty one.
 
-    Cache HONG khong duoc coi nhu cache TRONG. Ban truoc nuot JSONDecodeError roi
-    tra {}, nghia la mot file bi cat cut (kill giua luc ghi, day o dia, may sap
-    nguon) se lam lan chay ke tiep am tham goi lai TU DAU — dot mot ngay han ngach
-    ma khong mot dong canh bao. Gio no dung han va bao cho nguoi dung biet ban
-    `.bak` nam o dau.
+    Swallowing JSONDecodeError and returning {} would make a truncated file
+    (killed mid-write, disk full) silently re-call everything on the next run,
+    burning a day's quota with no warning. Fail loud instead, and point at `.bak`.
     """
     if not os.path.exists(path):
         return {}
@@ -91,13 +70,11 @@ def load_cache(path: str, ph: str) -> dict:
 
 
 def save_cache(path: str, ph: str, model: str, mode: str, recs: dict) -> None:
-    """Ghi NGUYEN TU: file tam + os.replace, giu mot ban `.bak` cua lan truoc.
+    """Write atomically: temp file + os.replace, keeping the previous file as `.bak`.
 
-    `json.dump` thang vao file that mat vai giay cho 7 MB. Bi kill dung trong
-    khoang do — dieu VUA suyt xay ra khi doi khoa API — thi file that bi cat cut
-    va toan bo cong cua mot ngay han ngach nam trong mot file khong doc duoc.
-    os.replace la thao tac nguyen tu tren cung he thong tep: hoac file cu con
-    nguyen, hoac file moi day du, khong bao gio co trang thai o giua.
+    A direct `json.dump` leaves a multi-second window where a kill truncates
+    the real file, destroying a day's worth of results. os.replace is atomic
+    on the same filesystem — the old file survives intact or the new lands whole.
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".tmp"
@@ -105,7 +82,7 @@ def save_cache(path: str, ph: str, model: str, mode: str, recs: dict) -> None:
         json.dump({"prompt_hash": ph, "model": model, "mode": mode,
                    "records": recs}, fh, ensure_ascii=False, indent=1)
         fh.flush()
-        os.fsync(fh.fileno())   # du lieu xuong dia truoc khi doi ten
+        os.fsync(fh.fileno())   # flush to disk before the rename
     if os.path.exists(path):
         os.replace(path, path + ".bak")
     os.replace(tmp, path)
@@ -113,7 +90,7 @@ def save_cache(path: str, ph: str, model: str, mode: str, recs: dict) -> None:
 
 def plan_work(run: dict, topics: dict, conn, top_n: int,
               limit_topics: int | None = None) -> list[tuple[str, str, list[dict]]]:
-    """(topic_id, nct_id, criteria[]) cho tung cap can suy luan."""
+    """(topic_id, nct_id, criteria[]) for every pair that needs reasoning."""
     tids = sorted(run)
     if limit_topics:
         tids = tids[:limit_topics]
@@ -146,13 +123,12 @@ def run_batch_trial(model: str, tid: str, nct: str, crit: list[dict],
                     narrative: str, conn, forced: bool, rejections: dict,
                     max_per_call: int = MAX_CRIT_PER_CALL
                     ) -> tuple[list[dict], dict]:
-    """Goi theo trial, chia nho neu trial co qua nhieu tieu chi.
+    """Call per trial, splitting into multiple calls if it has too many criteria.
 
-    Khop lai theo `criterion_idx` chu KHONG theo thu tu mang: mot lan khop sai
-    se gan quyet dinh cua tieu chi nay cho tieu chi khac — dung dieu invariant
-    3 cam. Chia nho khong lam thay doi dieu do: moi mieng van kiem idx cua
-    rieng no, va `seen` dung chung ca trial nen trung lap giua cac mieng cung
-    bi bat.
+    Matches results back by `criterion_idx`, never by array order — a mismatch
+    would attribute one criterion's decision to another (invariant 3). Splitting
+    doesn't weaken this: each piece still checks its own indices, and `seen` is
+    shared across the whole trial so duplicates across pieces are still caught.
     """
     valid_idx = {c["idx"]: c["section"] for c in crit}
     seen: set[int] = set()
@@ -239,7 +215,7 @@ def main() -> int:
     n_crit = sum(len(c) for _, _, c in work)
 
     if args.mode == "trial":
-        # Trial nhieu hon MAX_CRIT_PER_CALL tieu chi can nhieu hon mot lan goi.
+        # A trial with more than MAX_CRIT_PER_CALL criteria needs more than one call.
         calls = sum(-(-len(c) // args.max_criteria) for _, _, c in work)
     else:
         calls = n_crit
@@ -247,14 +223,10 @@ def main() -> int:
           f"({n_crit/max(len(work),1):.1f}/trial)")
     print(f"Che do '{args.mode}' -> {calls:,} lan goi API")
     if args.estimate:
-        # Han ngach theo TUNG MODEL. Con so 20/ngay do duoc bang 429 that — nhung
-        # TREN `gemini-3.6-flash`, khong phai tren model dang dung. Bang chung
-        # nguoc: 30/08/2026 `gemini-3.5-flash-lite` phuc vu 15 lan goi trich xuat
-        # luc 23:05 va 15 lan goi HyDE luc 23:14 — 30 lan trong mot ngay, tran
-        # 20/ngay se chan giua chung. Xem specs/risk-register.md.
-        # Han ngach nhan len theo SO DU AN, khong phai so khoa: ba khoa cung mot
-        # du an dung chung mot tran. Xac nhan 03/09/2026: ba khoa trong .env
-        # thuoc ba du an rieng, nen tran that la 3x.
+        # Quota is per model, not a flat number — 20/day was measured on
+        # gemini-3.6-flash, not the model in use. And it scales with PROJECT
+        # count, not key count: confirmed 2026-09-03 that .env's keys belong
+        # to separate projects, so the real cap is nk x per-model quota.
         nk = max(len(gemini.KEYS), 1)
         print(f"\nHan ngach — theo TUNG model, khong suy rong duoc "
               f"({nk} khoa = {nk} du an rieng):")
@@ -292,16 +264,15 @@ def main() -> int:
                                                 topics[tid], conn, args.forced,
                                                 rejections)
         except gemini.GeminiError as e:
-            # TAM THOI — khong ghi cache, lan chay sau tu thu lai.
+            # Transient — not cached, retried automatically on the next run.
             fails += 1
             print(f"  [{i}/{len(todo)}] {tid}/{nct} LOI TAM THOI: {e}",
                   file=sys.stderr)
-            # CAU DAO. Het han ngach NGAY thi moi cap con lai deu se hong y het,
-            # nhung `chat_json` van thu du 3 khoa va ngu toi 20s moi khoa truoc
-            # khi nem — tuc ~60s doi mot cap, nhan voi hang nghin cap con lai la
-            # nhieu gio goi API vo ich. Loi RAI RAC thi bo qua nhu cu; loi LIEN
-            # TIEP nghia la nguon da can, va dung viec dung cach la ghi cache roi
-            # thoat — lan chay sau tu resume tu cache.
+            # Circuit breaker: once quota is truly exhausted every remaining
+            # pair fails identically, but chat_json still retries all 3 keys
+            # with up to ~20s sleep each (~60s/pair) — thousands of pairs would
+            # waste hours. Stop cleanly on consecutive failures instead; a
+            # rerun resumes from cache.
             if fails >= MAX_CONSECUTIVE_FAILS:
                 print(f"\n!! {fails} loi LIEN TIEP — nhieu kha nang het han ngach "
                       f"ngay. Dung lai va ghi cache; chay lai lenh nay se tiep tuc "

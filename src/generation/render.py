@@ -1,22 +1,21 @@
-"""Phase 9 (khung cau truc) / Phase 10 (dung that) — render KHONG goi LLM.
+"""Phase 9 (spec) / Phase 10 (actually used) — render WITHOUT calling the LLM.
 
-`specs/09-evidence-grounded-generation.md` dac ta mot buoc danh bong van xuoi
-bang LLM. Ban demo song nay CO TINH BO qua LLM-polish do: moi request da tra
-1 (trich xuat) + toi da LIVE_TOP_N (suy luan) loi goi Gemini, them mot loi
-goi/trial nua cho van phong se nhan doi chi phi quota cho mot tinh nang da
-cang quota — xem "Pham vi" trong ke hoach.
+`specs/09-evidence-grounded-generation.md` specifies an LLM prose-polishing
+step. This live demo deliberately SKIPS it: every request already costs 1
+extraction + up to LIVE_TOP_N reasoning Gemini calls, and adding one more
+call per trial for wording would double the quota cost of a feature that's
+already quota-tight — see "Scope" in the plan.
 
-Nhung con lai cua specs/09 la CAU TRUC, khong phai van phong, va no ap dung
-duoc bang mau thuan tuy:
-  - buoc 3: `unverifiable` phai hien ro thanh mot dong giai thich, khong phai
-    badge trong rong (invariant 1)
-  - buoc 4: moi claim di kem trich dan tieu chi cua no (invariant 3)
-  - buoc 5: khung ngon ngu la "ho tro quyet dinh", khong bao gio "eligible"
+The rest of specs/09 is STRUCTURE, not prose, and applies as a template:
+  - step 3: `unverifiable` must show as an explanatory row, not an empty
+    badge (invariant 1)
+  - step 4: every claim carries its criterion citation (invariant 3)
+  - step 5: language frames this as "decision support", never "eligible"
     (invariant 4)
 
-Ham o day chi sap xep lai du lieu CO SAN tu Phase 8 (`aggregate`/`reason`) va
-Phase 1 (`store`) thanh mot dict de JSON-hoa gui qua SSE — khong doan them,
-khong tao chu nao khong co trong du lieu goc.
+Functions here only reshape data ALREADY produced by Phase 8
+(`aggregate`/`reason`) and Phase 1 (`store`) into a dict for JSON over SSE —
+no guessing, no text not already present in the source data.
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ DISCLAIMER = (
 
 
 def criterion_row(d: dict) -> dict:
-    """Mot dong bang tieu chi, dung dinh dang da qua `verify.check()` phia server."""
+    """One criterion-table row, in the format already validated by `verify.check()` server-side."""
     return {
         "criterion_idx": d["criterion_idx"],
         "section": d.get("section", "unknown"),
@@ -49,10 +48,10 @@ def criterion_row(d: dict) -> dict:
 
 
 def trial_card(trial: dict, decisions: list[dict], score: float) -> dict:
-    """Mot the trial da xep hang, san sang JSON-hoa gui qua SSE.
+    """One ranked trial card, ready to JSON-serialize over SSE.
 
-    `trial` la dict tu `store.get_trial()`. `decisions` la ket qua da qua kiem
-    chung cua `reason.run_batch_trial()`. Khong goi Gemini o day.
+    `trial` is a dict from `store.get_trial()`. `decisions` is the verified
+    output of `reason.run_batch_trial()`. No Gemini call happens here.
     """
     rows = [criterion_row(d) for d in sorted(decisions, key=lambda x: x["criterion_idx"])]
     n_vio = sum(1 for r in rows if r["label"] == "violated")

@@ -1,4 +1,4 @@
-"""Cham diem mot run file. Day la lenh duy nhat de bao cao ket qua.
+"""Score one run file. This is the single command for reporting results.
 
     python -m src.eval.score runs/bm25.dev.txt --year 2021
     python -m src.eval.score runs/hybrid.dev.txt --year 2021 --vs results/bm25.dev.json

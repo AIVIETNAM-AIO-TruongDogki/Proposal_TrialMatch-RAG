@@ -1,34 +1,20 @@
-"""Phase 4 buoc 3 — chay trich xuat theo lo (batch), co cache.
+"""Phase 4 step 3 — run batched extraction, cached.
 
     python -m src.extraction.extract --year 2021 --model gemini-3.6-flash
 
-Ghi ra data/profiles/{year}.{model}.json. Moi ban ghi giu CA HAI phien ban:
-`profile` tho tu model va `clean` sau khi loc grounding, kem `dropped` — danh
-sach nhung gi bi vut vi khong trich dan duoc.
+Writes data/profiles/{year}.{model}.json. Each record keeps BOTH the raw
+`profile` and the grounding-filtered `clean` version plus `dropped` — kept
+deliberately, since the drop list shows what kind of thing the model
+fabricates, which the hand-audit in step 5 needs.
 
-Giu lai phan bi vut la co y. "Ty le grounding 91%" chi la mot con so; danh sach
-9% bi vut moi cho biet model bia KIEU GI, va do la thu can cho hand-audit o
-buoc 5. Neu chi ghi ban da loc thi ta xoa mat bang chung cua chinh phep do.
+Batches `--batch-size` patients per call (default 5) to cut request count.
+Each returned profile carries its own `index` to match back; a missing/
+duplicate/out-of-range index only breaks that one patient, not the batch
+(see schema.batch_schema).
 
-GOI THEO LO
------------
-Moi lan goi Gemini xu ly `--batch-size` benh an cung luc (mac dinh 5) thay vi
-tung benh an mot — giam so request tren free tier (5/phut, 20/ngay, xem
-docs/decisions/phase4-gemini-backend.md). Model tra ve moi ho so kem `index`
-de khop lai DUNG benh an; index thieu, trung, hoac ngoai khoang chi lam HONG
-benh an do, khong lam hong ca lo (xem schema.batch_schema).
-
-`seconds` ghi trong ban ghi la thoi gian CA LO chia deu cho so benh an trong
-lo, de trung binh "s/goi" cua verify.py van doc duoc nhu "giay moi benh an".
-`prompt_tokens`/`output_tokens` giu nguyen TONG CA LO — chia deu se sai vi
-phan lon token he thong (system prompt) chi ton mot lan cho ca lo, khong
-phai N lan.
-
-CACHE
------
-Khoa cache gom (year, model, prompt_hash). Doi prompt hay doi schema thi
-prompt_hash doi va cache tu hong dung cho — khong con nguy co so ket qua cua
-hai cau hoi khac nhau roi tuong la so hai model.
+Cache key is (year, model, prompt_hash) — a prompt or schema change
+invalidates it, so results from two different questions are never compared
+as if they were two models.
 """
 
 from __future__ import annotations
@@ -66,13 +52,12 @@ def _save(path: str, ph: str, model: str, recs: dict) -> None:
 
 def extract_one(narrative: str, model: str = gemini.MODEL
                 ) -> tuple[dict | None, list[dict], dict]:
-    """Trich xuat MOT benh an moi tai thoi diem request — khong dinh vao topic
-    nam nao, khong dinh vao cache tren dia.
+    """Extract ONE narrative at request time — no topic/year, no disk cache.
 
-    Tra ve (clean, dropped, meta). `clean` la ho so da qua loc grounding, `None`
-    neu model tra sai schema. Tai dung dung nguyen `schema.batch_schema(1)` /
-    `schema.batch_user_prompt([narrative])` — schema lo da nhan mang do dai bat
-    ky, mot phan tu chi la truong hop n=1, khong can schema rieng.
+    Returns (clean, dropped, meta). `clean` is None if the model returns an
+    invalid schema. Reuses `schema.batch_schema(1)` /
+    `schema.batch_user_prompt([narrative])` as-is — the batch schema already
+    handles any array length, so n=1 needs no schema of its own.
     """
     out, meta = gemini.chat_json(model, schema.BATCH_SYSTEM_PROMPT,
                                  schema.batch_user_prompt([narrative]),
@@ -117,16 +102,18 @@ def run(model: str, year: int, limit: int | None = None,
                 schema.batch_user_prompt(narratives),
                 schema.batch_schema(len(batch_ids)))
         except gemini.GeminiError as e:
-            # Loi ha tang (het quota, mang...) la TAM THOI — KHONG ghi vao
-            # recs, de lan chay sau (khong can --force) tu dong thu lai thay
-            # vi bi coi la "da xong" mai mai. Khac voi nhanh hong ben duoi
-            # (JSON sai dinh dang / khop index that bai), von it co co hoi
-            # tu sua khi chay lai voi cung dau vao nen van duoc cache.
+            # Transient failures (quota, network) are NOT written to recs, so
+            # the next run retries automatically instead of treating them as
+            # permanently done. Unlike the failure branch below (bad JSON /
+            # index match), which rarely self-corrects on a retry with the
+            # same input, so that one IS cached.
             done += len(batch_ids)
             print(f"  lo {bi}/{n_batches} LOI TAM THOI (se thu lai o lan chay "
                   f"sau): {e}", file=sys.stderr)
             continue
 
+        # Split evenly across the batch; prompt/output tokens stay batch-total
+        # below — the system prompt is paid once per batch, not N times.
         per_topic_seconds = round(meta["seconds"] / len(batch_ids), 2)
         items = (out or {}).get("profiles") or []
         by_index: dict[int, dict] = {}
@@ -134,8 +121,8 @@ def run(model: str, year: int, limit: int | None = None,
             idx = it.get("index") if isinstance(it, dict) else None
             if isinstance(idx, int) and 0 <= idx < len(batch_ids) and idx not in by_index:
                 by_index[idx] = it
-            # index thieu / trung / ngoai khoang: bo qua — benh an tuong ung
-            # se roi vao nhanh "hong" ben duoi thay vi khop nham benh nhan.
+            # missing/duplicate/out-of-range index: skip — that patient falls
+            # into the "failed" branch below instead of matching the wrong one.
 
         for i, tid in enumerate(batch_ids):
             narrative = narratives[i]
@@ -150,8 +137,8 @@ def run(model: str, year: int, limit: int | None = None,
             if prof is not None and verify.schema_ok(prof):
                 rec["clean"], rec["dropped"] = verify.verify_profile(prof, narrative)
             else:
-                # Giu lai chuoi tho de go loi: biet model tra ve CAI GI khi
-                # hong quan trong hon la chi biet rang no hong.
+                # Keep the raw string for debugging: knowing WHAT the model
+                # returned when it fails matters more than just that it failed.
                 rec["clean"], rec["dropped"] = None, None
                 rec["raw"] = meta["raw"][:2000]
             recs[tid] = rec
@@ -162,8 +149,8 @@ def run(model: str, year: int, limit: int | None = None,
               f"({el/done:.1f}s/benh an)", flush=True)
         _save(path, ph, model, recs)
 
-    # Goi lai vo dieu kien: neu lo cuoi cung loi tam thoi (khong _save() rieng),
-    # file van phai phan anh dung recs hien tai truoc khi in thong bao ben duoi.
+    # Unconditional final save: if the last batch failed transiently (no
+    # _save() of its own), the file must still reflect recs before printing below.
     _save(path, ph, model, recs)
 
     n_bad = sum(1 for r in recs.values() if r.get("clean") is None)

@@ -1,30 +1,26 @@
-"""Phase 7 — xep hang lai top-100 (bac 4 cua thang ablation).
+"""Phase 7 — rerank the top-100 (ladder rung 4).
 
     python -m src.rerank.rerank --self-test
     python -m src.rerank.rerank --run runs/hybrid.dev.txt --model medcpt \
         --out runs/hybrid_rerank.dev.txt
-    python -m src.rerank.rerank --bench runs/hybrid.dev.txt   # ca ba model
+    python -m src.rerank.rerank --bench runs/hybrid.dev.txt   # all three models
 
-BA HO MODEL, BA CACH GOI KHAC NHAU — DUNG GIA DINH MOT API HOP CA BA
----------------------------------------------------------------------
-medcpt  MedCPT-Cross-Encoder: BERT cross-encoder, huan luyen CHUNG voi chinh
-        retriever MedCPT. Diem = logit[0] tho.
-bge     bge-reranker-v2-m3: cross-encoder tong quat. Diem = logit[0] tho.
-qwen3   Qwen3-Reranker-0.6B: KHONG phai cross-encoder. No la mot LLM duoc hoi
-        "co lien quan khong?" va diem = log P(yes) - log P(no) tren token ke
-        tiep. Ap khuon cross-encoder len no se ra diem vo nghia ma khong nem
-        loi nao.
+Three model families, three different calling conventions — no single API fits all:
+medcpt  MedCPT-Cross-Encoder: a BERT cross-encoder trained JOINTLY with the
+        MedCPT retriever. Score = raw logit[0].
+bge     bge-reranker-v2-m3: general-purpose cross-encoder. Score = raw logit[0].
+qwen3   Qwen3-Reranker-0.6B: NOT a cross-encoder. It's an LLM asked "is this
+        relevant?", scored as log P(yes) - log P(no) on the next token.
+        Forcing the cross-encoder interface on it produces a meaningless
+        score with no error raised.
 
-TRAN CUNG — RECALL@100
------------------------
-Xep hang lai KHONG the cuu thu ma truy hoi khong bao gio tra ve. Recall@100
-cua run dau vao la tran tuyet doi cua moi reranker o day. Bao cao no truoc
-moi bang diem, neu khong se di tune mot thu da bi chan tran.
+Hard ceiling: Recall@100. Reranking can't save a trial retrieval never
+returns — the input run's Recall@100 caps every reranker here. Report it
+before any score table, or you'd be tuning against something already capped.
 
-DO TRE LA KET QUA, KHONG PHAI CHU THICH
-----------------------------------------
-Mot reranker them 0.01 nDCG voi gia 40 lan do tre la mot ket qua AM cho mot
-he thong dinh dung duoc that, va noi ro dieu do la mot dong gop.
+Latency is a result, not a footnote: a reranker that adds 0.01 nDCG at the
+cost of 40x latency is a NEGATIVE result for a system meant to actually
+ship, and saying so is itself a contribution.
 """
 
 from __future__ import annotations
@@ -49,7 +45,7 @@ MODELS = {
 
 
 class _CrossEncoder:
-    """MedCPT / bge — cross-encoder that su, diem = logit[0]."""
+    """MedCPT / bge — a real cross-encoder, score = logit[0]."""
 
     MAX_LEN = 512
 
@@ -75,10 +71,10 @@ class _CrossEncoder:
 
 
 class _QwenReranker:
-    """Qwen3-Reranker — LLM tra loi yes/no, diem = logP(yes) - logP(no).
+    """Qwen3-Reranker — an LLM answering yes/no, score = logP(yes) - logP(no).
 
-    KHONG phai cross-encoder: khong co dau phan loai, chi co phan phoi token ke
-    tiep. Dung AutoModelForSequenceClassification len no se hong am tham.
+    NOT a cross-encoder: no classification head, only a next-token
+    distribution. Loading it with AutoModelForSequenceClassification would fail silently.
     """
 
     MAX_LEN = 2048
@@ -106,10 +102,11 @@ class _QwenReranker:
             enc = self.tok(prompts, truncation=True, padding=True,
                            max_length=self.MAX_LEN, return_tensors="pt").to(self.device)
             with self.torch.no_grad():
-                # logits_to_keep=1 — CHI tinh logits cho vi tri cuoi. Khong co no,
-                # transformers tinh logits cho CA chuoi roi ta vut het tru vi tri
-                # cuoi: 16 x 2048 x 151.669 x 2 byte = 9,94 GB thay vi 4,9 MB.
-                # Day la nguyen nhan OOM that su, khong phai thieu VRAM.
+                # logits_to_keep=1 — computes logits for only the last
+                # position. Without it, transformers computes logits for the
+                # WHOLE sequence and we discard all but the last: 16 x 2048 x
+                # 151,669 x 2 bytes = 9.94GB instead of 4.9MB. This was the
+                # real OOM cause, not insufficient VRAM.
                 logits = self.mod(**enc, logits_to_keep=1).logits[:, -1, :].float()
             lp = self.torch.nn.functional.log_softmax(logits, dim=-1)
             out += (lp[:, self.yes] - lp[:, self.no]).cpu().tolist()
@@ -123,7 +120,7 @@ def load_reranker(key: str, device: str = "cuda"):
 
 
 def self_test(device: str = "cuda") -> bool:
-    """Cap lien quan phai duoc cham cao hon cap khong lien quan — cho ca ba ho."""
+    """A relevant pair must score higher than an unrelated pair — for all three families."""
     q = "45-year-old man with anaplastic astrocytoma of the spine, prior radiation."
     rel = "Phase II study of temozolomide in adults with recurrent anaplastic astrocytoma."
     unrel = "Dietary sodium reduction in healthy adolescents: a randomized trial."
@@ -146,7 +143,7 @@ def self_test(device: str = "cuda") -> bool:
 
 
 def doc_texts(nct_ids: list[str], conn) -> dict[str, str]:
-    """Van ban trial de rerank — dung DUNG store.retrieval_text() nhu luc index."""
+    """Trial text to rerank — must match store.retrieval_text() exactly, as used at index time."""
     out = {}
     for nct in nct_ids:
         t = store.get_trial(conn, nct)

@@ -1,0 +1,23 @@
+# Multi-GB, gitignored, built per machine — never part of the image; mount
+# data/ and indexes/ as volumes at `docker run` instead (see Dockerfile).
+rawdata/
+data/
+indexes/
+runs/
+results/
+logs/
+
+.git/
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# Not needed inside the backend image.
+frontend/
+tests/
+paper/
+specs/
+documents/
+scripts/
+docs/

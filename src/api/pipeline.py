@@ -1,14 +1,14 @@
-"""Phase 10 — dieu phoi `/match`: 7 buoc, phat su kien ngay khi tung buoc xong.
+"""Phase 10 — orchestrates `/match`: 7 steps, streaming an event as each one finishes.
 
-Khong chan ca request doi loi cham nhat. Do luong that tren
-`data/reasoning/*.json` (1.499 ban ghi that, Phase 8): trung vi 4,35s, toi da
-72,98s moi lan goi theo trial — chan cung nghia la nguoi dung nhin man hinh
-trang trong toi 73 giay khong mot dau hieu nao. `trial_result` phat NGAY khi
-tung trial suy luan xong, khong doi xep hang cuoi cung.
+Never blocks the whole request on the slowest call. Measured on real data
+(`data/reasoning/*.json`, 1,499 real records, Phase 8): median 4.35s, max
+72.98s per trial-mode call — blocking would mean a blank screen for up to
+73s with no signal. `trial_result` fires as soon as EACH trial finishes
+reasoning, not after the final ranking.
 
-Moi buoc tai dung nguyen ham da co san tu Phase 3-9 (xem specs/10's "Decide:
-Nothing new" va ke hoach da duyet) — day chi la lop dieu phoi, khong them
-thuat toan moi.
+Every step reuses functions already built in Phase 3-9 (see specs/10's
+"Decide: Nothing new" and the approved plan) — this is only an orchestration
+layer, no new algorithm.
 """
 
 from __future__ import annotations
@@ -24,24 +24,25 @@ from src.generation import render
 from src.reasoning import aggregate, reason
 from src.retrieval import bm25, fusion
 
-LIVE_TOP_N = 5             # tach khoi reason.TOP_N=20 (nghien cuu) — tham so UX/do tre
-MAX_NARRATIVE_CHARS = 4000  # gioi han GET+EventSource, ghi ro co chu dich
-RRF_K = 60                  # cau hinh da chon o Phase 6
-RRF_WEIGHTS = [0.5, 0.5]    # w_lex — cau hinh da chon o Phase 6
-AGG_RULE = "strict"         # luat gop thang cuoc, F1=0.6222 — Phase 8
+LIVE_TOP_N = 5             # separate from reason.TOP_N=20 (research) — a UX/latency knob
+MAX_NARRATIVE_CHARS = 4000  # GET+EventSource limit, capped deliberately
+RRF_K = 60                  # winning config from Phase 6
+RRF_WEIGHTS = [0.5, 0.5]    # w_lex — winning config from Phase 6
+AGG_RULE = "strict"         # winning rule, F1=0.6222 — Phase 8
 
 
 async def run_match(state, narrative: str) -> AsyncIterator[tuple[str, dict]]:
-    """Async generator: yield (ten_su_kien, payload) theo tung buoc.
+    """Async generator: yields (event_name, payload) per step.
 
-    Loi MOT trial (`trial_error`) khong huy ca request — khop hanh vi bat loi
-    tung item da co san o `reason.main()`. Loi trich xuat (buoc 1) LUI VE benh
-    an tho lam truy van thay vi dung han, giong het `query.main()` da lam khi
-    ho so trich xuat hong cho mot topic.
+    A single trial's failure (`trial_error`) doesn't cancel the whole request
+    — matches the per-item error handling already in `reason.main()`.
+    Extraction failure (step 1) falls back to the raw narrative as the query
+    rather than aborting, exactly like `query.main()` does for a topic with a
+    failed profile.
 
-    `payload` cua su kien `done` mang `gemini_calls` — nguoi goi (app.py) dung
-    con so nay de `quota.commit()`, vi day la so LOI GOI THAT SU, khac voi uoc
-    tinh dung luc `quota.reserve()`.
+    The `done` event's payload carries `gemini_calls` — the caller (app.py)
+    uses this for `quota.commit()`, since it's the ACTUAL call count,
+    different from the estimate used at `quota.reserve()`.
     """
     request_id = uuid.uuid4().hex[:12]
     t0 = time.time()
@@ -80,7 +81,7 @@ async def run_match(state, narrative: str) -> AsyncIterator[tuple[str, dict]]:
     for coro in asyncio.as_completed(tasks):
         try:
             nct, kept, calls = await coro
-        except Exception as e:  # noqa: BLE001 — mot trial hong khong duoc huy ca request
+        except Exception as e:  # noqa: BLE001 — one bad trial must not cancel the whole request
             yield "trial_error", {"message": str(e)}
             continue
         n_gemini_calls += calls

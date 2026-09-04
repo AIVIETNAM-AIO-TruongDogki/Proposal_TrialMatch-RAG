@@ -1,24 +1,18 @@
-"""Phase 5 buoc 2 — tim kiem dense bang matmul CHINH XAC, khong FAISS.
+"""Phase 5 step 2 — exact dense search via matmul, no FAISS.
 
     python -m src.dense.search --vecs indexes/dense/bge-m3.base.npz \
         --model bge-m3 --out runs/dense.dev.txt
 
-VI SAO KHONG FAISS/HNSW
-------------------------
-375.580 x 1024 chieu x fp16 = 769 MB — vua GPU 8 GB con du cho. 75 truy van
-nhan ca corpus roi torch.topk mat vai giay. Brute force la CHINH XAC.
+Why not FAISS/HNSW: 375,580 x 1024-dim x fp16 = 769 MB, fits an 8GB GPU with
+room to spare. 75 queries against the whole corpus plus torch.topk takes
+seconds. Brute force is exact; approximate-index error would blend into the
+model-vs-model gap on the ablation ladder — rung 2 vs. rung 1 differences
+would be from the MODEL or the INDEX, indistinguishably. Qdrant/FAISS is
+Phase 10's deployment question, not Phase 5's research question.
 
-FAISS/HNSW dua vao sai so xap xi, va sai so do se tron vao chenh lech
-model-vs-model tren thang ablation: khong con biet bac 2 khac bac 1 vi MODEL
-hay vi THAM SO INDEX. Bo mot phu thuoc va bo luon mot bien gay nhieu.
-Qdrant/FAISS la cau hoi trien khai cua Phase 10, khong phai cau hoi nghien
-cuu cua Phase 5.
-
-DIEM = MAX QUA CAC CHUNK
--------------------------
-Mot trial duoc cat thanh nhieu chunk; diem cua trial la diem CAO NHAT trong
-cac chunk cua no. Phai max SAU khi nhan voi truy van, khong phai gop vector
-truoc — gop truoc se lam nhoe dung cai doan van khop nhat.
+Score = MAX across chunks: a trial is split into chunks, and its score is the
+HIGHEST-scoring chunk, taken AFTER the query dot-product, not by pooling
+vectors first — pooling first blurs exactly which passage matched.
 """
 
 from __future__ import annotations
@@ -49,24 +43,23 @@ def search(vec_path: str, model_key: str, topics: dict[str, str],
     qids = sorted(topics)
     Q = enc.encode_query([topics[q] for q in qids])
 
-    # Tra GPU lai TRUOC khi cap phat Vt. Encoder (1,1 GB fp16 voi bge-m3) khong
-    # con viec gi sau khi ma hoa 75 truy van, nhung neu de no song thi no cong
-    # don voi Vt (~920 MB o toan corpus) va ban sao float32 tam trong vong chuan
-    # hoa (~819 MB moi mieng) tren cung 7,62 GB.
+    # Free GPU memory BEFORE allocating Vt. The encoder (1.1GB fp16 for
+    # bge-m3) has nothing left to do after encoding 75 queries, but left
+    # alive it stacks with Vt (~920MB for the full corpus) and the temp
+    # float32 copy during normalization (~819MB/chunk) on the same 7.62GB.
     del enc
     if device.startswith("cuda"):
         torch.cuda.empty_cache()
 
-    # Chuan hoa CA HAI phia o day thay vi tin vao encoder: MedCPT co y khong
-    # normalize, nen cosine phai duoc lam ro rang tai diem so sanh.
+    # Normalize BOTH sides here rather than trusting the encoder: MedCPT
+    # deliberately doesn't normalize, so cosine must be made explicit here.
     Qt = torch.tensor(np.asarray(Q, dtype=np.float32), device=device)
     Qt = torch.nn.functional.normalize(Qt, dim=1).half()
 
-    # Chuan hoa theo TUNG MIENG roi giu fp16. Goi .float() tren ca ma tran se
-    # cap phat mot ban sao float32: voi 375.580 chunk x 3072 chieu la 4,6 GB,
-    # va neu de trong vong lap thi cap phat lai cho MOI truy van -> OOM chac
-    # chan tren GPU 8 GB. Loi nay chi lo ra o quy mo toan corpus, khong lo o
-    # subsample, nen phai chan tu day.
+    # Normalize in CHUNKS, keep fp16. Calling .float() on the whole matrix
+    # allocates a float32 copy: 375,580 chunks x 3072 dims is 4.6GB, and doing
+    # this inside the query loop would re-allocate it PER QUERY -> guaranteed
+    # OOM on an 8GB GPU. Only shows up at full-corpus scale, not on a subsample.
     Vt = torch.tensor(V, device=device, dtype=torch.float16)
     for s in range(0, Vt.shape[0], 200_000):
         Vt[s:s + 200_000] = torch.nn.functional.normalize(
@@ -78,9 +71,9 @@ def search(vec_path: str, model_key: str, topics: dict[str, str],
     run: dict[str, dict[str, float]] = {}
     t0 = time.time()
     for i, qid in enumerate(qids):
-        sims = (Vt @ Qt[i]).float()                      # matmul fp16, ket qua fp32
+        sims = (Vt @ Qt[i]).float()                      # fp16 matmul, fp32 result
         best = torch.full((n_docs,), -1e9, device=device)
-        best.scatter_reduce_(0, own, sims, reduce="amax")  # MAX qua chunk
+        best.scatter_reduce_(0, own, sims, reduce="amax")  # MAX across chunks
         k = min(depth, n_docs)
         sc, idx = torch.topk(best, k)
         run[qid] = {ids[j]: float(s) for j, s in zip(idx.tolist(), sc.tolist())}

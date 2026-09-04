@@ -1,12 +1,12 @@
-"""Nap topics va qrels cua TREC Clinical Trials.
+"""Load TREC Clinical Trials topics and qrels.
 
-Bay so 1 cua bo du lieu nay: CA HAI nam deu danh so topic tu 1. Topic 1 cua
-2021 la nam 45 tuoi u sao bao tuy song; topic 1 cua 2022 la nam 19 tuoi tu van
-suc khoe tinh duc. Nap chung vao mot dict theo so nguyen tho se AM THAM gop hai
-benh nhan khong lien quan lam mot.
+Trap #1 of this dataset: BOTH years number topics starting from 1. Topic 1 of
+2021 is a 45-year-old with sarcoma; topic 1 of 2022 is a 19-year-old asking
+about sexual health. Loading both into one dict keyed by a raw integer would
+SILENTLY merge two unrelated patients.
 
-Vi vay moi id o day deu duoc dat tien to nam ("2021_1"), va so tran khong bao
-gio thoat ra khoi module nay.
+Every id here is therefore year-prefixed ("2021_1"), and a raw number never
+leaves this module.
 """
 
 from __future__ import annotations
@@ -16,15 +16,15 @@ import xml.etree.ElementTree as ET
 
 RAWDATA = "rawdata"
 
-# Y nghia nhan, lay nguyen van tu NIST:
+# Label meaning, verbatim from NIST:
 #   "Judgment of 0 is non-relevant, 1 is excluded, and 2 is eligible."
-# Doc nguoc voi hau het collection TREC khac, nen dat ten thay vi dung so tran.
+# Reads backwards from most TREC collections, hence named instead of raw numbers.
 NOT_RELEVANT = 0
-EXCLUDED = 1      # lien quan y khoa NHUNG bi tieu chi loai tru -> ca then chot
+EXCLUDED = 1      # medically relevant BUT excluded by criteria -> the key case
 ELIGIBLE = 2
 
-DEV_YEAR = 2021   # 75 topic
-TEST_YEAR = 2022  # 50 topic — chi cham DUNG MOT LAN, o Phase 11
+DEV_YEAR = 2021   # 75 topics
+TEST_YEAR = 2022  # 50 topics — scored EXACTLY ONCE, at Phase 11
 
 Qrels = dict[str, dict[str, int]]
 
@@ -46,7 +46,7 @@ def load_topics(year: int, rawdata: str = RAWDATA) -> dict[str, str]:
 
 
 def load_qrels(year: int, rawdata: str = RAWDATA) -> Qrels:
-    """Doc file qrels dang TREC: `topic 0 nct_id label`."""
+    """Read a TREC-format qrels file: `topic 0 nct_id label`."""
     path = os.path.join(rawdata, f"qrels{year}.txt")
     out: Qrels = {}
     with open(path, encoding="utf-8") as fh:
@@ -60,15 +60,15 @@ def load_qrels(year: int, rawdata: str = RAWDATA) -> Qrels:
 
 
 def eligible_only(qrels: Qrels) -> Qrels:
-    """Ban do lai nhan cho ho do 'eligibility-aware'.
+    """Remap labels for the 'eligibility-aware' metric family.
 
     ELIGIBLE(2) -> 1,  EXCLUDED(1) -> 0,  NOT_RELEVANT(0) -> 0.
 
-    Day la nua quan trong nhat cua Phase 2. Voi thang do CHINH THUC cua TREC,
-    mot trial "lien quan y khoa nhung bi loai tru" duoc gain DUONG — dung cai
-    that bai ma ca de tai nay sinh ra de loai bo. Danh gia luan diem chinh bang
-    nDCG chinh thuc thoi thi mot bo loc eligibility HOAT DONG TOT se trong nhu
-    mot buoc lui. Luon bao cao ca hai ho, canh nhau.
+    This is half of Phase 2's real contribution. On TREC's OFFICIAL scale, a
+    trial that's "medically relevant but excluded" gains positive credit — the
+    exact failure this project exists to filter out. Judging the headline
+    claim by official nDCG alone would make a working eligibility filter look
+    like a regression. Always report both families, side by side.
     """
     return {t: {d: (1 if r == ELIGIBLE else 0) for d, r in docs.items()}
             for t, docs in qrels.items()}

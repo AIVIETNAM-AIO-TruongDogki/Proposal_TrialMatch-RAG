@@ -1,10 +1,10 @@
-"""Phase 1 — build canonical store: 375.580 file XML -> SQLite.
+"""Phase 1 — build the canonical store: 375,580 XML files -> SQLite.
 
     python -m src.corpus.build_db --db data/trials.db
 
-Worker parse song song, tien trinh chinh ghi (SQLite mot writer). Cuoi chay
-in bao cao chat luong parse — do la deliverable cua Phase 1, khong phai phu
-luc: neu khong do thi khong biet 5 trieu dong criteria co dung khong.
+Workers parse in parallel; the main process is the sole SQLite writer. Ends
+with a parse-quality report — that report IS Phase 1's deliverable, not an
+appendix: without it there's no way to know if 5 million criteria rows are correct.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ BATCH = 2000
 
 
 def iter_paths(rawdata: str):
-    """Duyet cay corpus. Chi lay file trial (NCT*.xml) — topics*.xml cung nam
-    trong rawdata/ nen `*.xml` se dem thua 2 file."""
+    """Walk the corpus tree. Only trial files (NCT*.xml) — topics*.xml also
+    lives in rawdata/, so a bare `*.xml` glob would overcount by 2 files."""
     for root, _, files in os.walk(rawdata):
         for f in files:
             if f.startswith("NCT") and f.endswith(".xml"):
@@ -73,7 +73,7 @@ def write_batch(conn: sqlite3.Connection, batch: list[Trial]) -> None:
 
 
 def quality_report(conn: sqlite3.Connection) -> None:
-    """Bao cao chat luong parse — exit criterion cua Phase 1."""
+    """Parse-quality report — Phase 1's exit criterion."""
     q = lambda sql: conn.execute(sql).fetchone()[0]
 
     total = q("SELECT COUNT(*) FROM trials")
@@ -114,7 +114,7 @@ def quality_report(conn: sqlite3.Connection) -> None:
     na = q("SELECT COUNT(*) FROM trials WHERE min_age_years IS NULL AND min_age_raw IS NOT NULL")
     print(f"    min_age khong parse duoc (vd 'N/A'): {na:,}")
 
-    # Kiem chung span: co so ky thuat cua invariant 3.
+    # Span verification: the technical basis of invariant 3.
     bad = 0
     checked = 0
     for raw, text, s, e in conn.execute(

@@ -1,24 +1,28 @@
-"""Phase 0 — tai lai rawdata/ tren mot may moi, tu Hugging Face Hub.
+"""Phase 0 — re-download rawdata/ on a fresh machine, from Hugging Face Hub.
 
     python -m src.fetch_data
 
-rawdata/ (8.9 GB: snapshot ClinicalTrials.gov 2021-04-27 + topics/qrels TREC 2021/2022) khong nam
-trong git (xem .gitignore). Ban dau du dinh tai lai tu 5 file zip goc cua trec-cds.org, nhung du an
-nay dung lai o mot phuong an don gian hon: **mot file `rawdata.tar.gz` duy nhat**, do nguoi dung tu
-tar + upload len mot Hugging Face dataset repo rieng, roi script nay tai va giai nen lai.
+rawdata/ (8.9GB: ClinicalTrials.gov 2021-04-27 snapshot + TREC 2021/2022
+topics/qrels) is gitignored. Originally planned to re-fetch from trec-cds.org's
+5 original zip files, but this project settled on a simpler path: **one
+`rawdata.tar.gz` file**, tarred and uploaded by hand to a private Hugging Face
+dataset repo, then downloaded and extracted by this script.
 
-CHUAN BI (mot lan, tren may da co san rawdata/) — xem them docs/decisions/data-fetch-recovery.md:
-    tar -czf rawdata.tar.gz rawdata/      # chay tu GOC du an, KHONG phai tu trong rawdata/
+ONE-TIME PREP (on a machine that already has rawdata/) — see also
+docs/decisions/data-fetch-recovery.md:
+    tar -czf rawdata.tar.gz rawdata/      # run from the PROJECT ROOT, not inside rawdata/
     hf auth login
-    hf upload <ten_repo> rawdata.tar.gz --repo-type=dataset
-    # dat HF_DATASET_REPO=<ten_repo> (va HF_TOKEN neu repo private) trong .env
+    hf upload <repo_name> rawdata.tar.gz --repo-type=dataset
+    # set HF_DATASET_REPO=<repo_name> (and HF_TOKEN if private) in .env
 
-Vi sao khong `hf upload . --repo-type=dataset` tu goc du an: `hf upload` khong tu dong loai tru theo
-.gitignore (chi co --include/--exclude thu cong) — chay tu goc se co gang day ca .env (lo API key),
-.venv/ (5.5 GB), .git/, data/, indexes/. Luon nen thanh MOT file va upload dung file do.
+Why not `hf upload . --repo-type=dataset` from the project root: `hf upload`
+doesn't respect .gitignore automatically (only manual --include/--exclude) —
+running it from root would try to upload .env (leaking the API key), .venv/
+(5.5GB), .git/, data/, indexes/. Always tar to ONE file and upload that.
 
-Archive mang san tien to `rawdata/` ben trong (dung `tar -czf rawdata.tar.gz rawdata/` la ra dung
-the), nen giai nen vao THU MUC CHA cua --dest, khong phai vao chinh --dest.
+The archive already has a `rawdata/` prefix inside it (that's what `tar -czf
+rawdata.tar.gz rawdata/` produces), so it's extracted into the PARENT of
+--dest, not into --dest itself.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ from huggingface_hub.errors import HfHubHTTPError
 load_dotenv()
 
 ARCHIVE_NAME = "rawdata.tar.gz"
-EXPECTED_NCT_COUNT = 375_580  # xem CLAUDE.md — find rawdata -name 'NCT*.xml' | wc -l
+EXPECTED_NCT_COUNT = 375_580  # see CLAUDE.md — find rawdata -name 'NCT*.xml' | wc -l
 
 
 class FetchError(RuntimeError):
@@ -48,17 +52,17 @@ def _looks_populated(dest: Path) -> bool:
 
 
 def extract_archive(archive_path: str, dest: Path) -> None:
-    """Giai nen mot file .tar.gz mang san tien to rawdata/ vao thu muc cha cua dest.
+    """Extract a .tar.gz that already has a rawdata/ prefix into dest's parent.
 
-    Tach rieng ham nay khoi fetch() de kiem thu duoc bang mot archive gia lap, khong can
-    Hugging Face that.
+    Kept separate from fetch() so it's testable with a fake archive, without
+    needing real Hugging Face access.
     """
     with tarfile.open(archive_path) as tf:
         tf.extractall(dest.parent)
 
 
 def verify_count(dest: Path) -> int:
-    """Dem file NCT*.xml — do luong, khong gia dinh thanh cong. Xem CLAUDE.md."""
+    """Count NCT*.xml files — measured, not assumed. See CLAUDE.md."""
     count = sum(1 for _ in dest.rglob("NCT*.xml"))
     if count != EXPECTED_NCT_COUNT:
         print(f"CANH BAO: tim thay {count} file NCT*.xml, ky vong {EXPECTED_NCT_COUNT}. "

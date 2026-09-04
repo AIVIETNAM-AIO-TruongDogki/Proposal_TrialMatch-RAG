@@ -1,14 +1,14 @@
-"""Kiem chung harness — exit criterion cua Phase 2.
+"""Harness verification — Phase 2's exit criterion.
 
     python -m src.eval.verify
 
-Ba phep kiem:
-  1. nDCG@10 khop voi ban tinh tay (harness co noi dung day khong?)
-  2. contamination@10 khop voi ban dem tay
-  3. Bay cua thang do CHINH THUC hien ra tren qrels THAT
+Three checks:
+  1. nDCG@10 matches a hand-computed value (does the harness read content right?)
+  2. contamination@10 matches a hand-count
+  3. The official scale's trap shows up on REAL qrels
 
-Phep 3 la ly do Phase 2 ton tai. No dung mot run doi khang — xep het cac trial
-EXCLUDED len dau — roi cho thay thang do chinh thuc cham cho no diem CAO.
+Check 3 is the reason Phase 2 exists. It runs an adversarial ranking — every
+EXCLUDED trial pushed to the top — and shows the official scale scores it HIGH.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from src.eval import data, metrics
 
 
 def _ndcg_by_hand(rels: list[int], k: int = 10) -> float:
-    """gain tuyen tinh, chiet khau log2(rank+1) — quy uoc cua trec_eval."""
+    """Linear gain, log2(rank+1) discount — trec_eval's convention."""
     dcg = sum(r / math.log2(i + 2) for i, r in enumerate(rels[:k]))
     ideal = sorted(rels, reverse=True)
     idcg = sum(r / math.log2(i + 2) for i, r in enumerate(ideal[:k]))
@@ -39,9 +39,9 @@ def main() -> int:
     print("KIEM CHUNG HARNESS  (Phase 2 exit criterion)")
     print("=" * 72)
 
-    # ---- 1 & 2: doi chieu voi ban tinh tay tren du lieu tong hop -------------
+    # ---- 1 & 2: check against a hand-computed value on synthetic data --------
     print("\n1) nDCG@10 va contamination@10 vs ban tinh tay")
-    labels = [2, 1, 0, 2, 1, 0, 0, 2, 0, 1, 2]     # thu tu da xep hang
+    labels = [2, 1, 0, 2, 1, 0, 0, 2, 0, 1, 2]     # already in ranked order
     qrels = {"2021_1": {f"d{i}": r for i, r in enumerate(labels)}}
     run = {"2021_1": {f"d{i}": float(len(labels) - i) for i in range(len(labels))}}
 
@@ -56,15 +56,15 @@ def main() -> int:
     ok &= check("judged@10 (moi doc deu da cham)",
                 per["elig/judged_10"]["2021_1"], 1.0)
 
-    # ---- 3: bay cua thang do chinh thuc, tren qrels THAT --------------------
+    # ---- 3: the official scale's trap, on REAL qrels --------------------
     print("\n2) Bay cua thang do chinh thuc — qrels 2021 that")
     real = data.load_qrels(2021)
     counts = data.label_counts(real)
     print(f"   {len(real)} topic | eligible={counts[2]:,} "
           f"excluded={counts[1]:,} not-relevant={counts[0]:,}")
 
-    # Run doi khang: uu tien EXCLUDED, roi ELIGIBLE, roi phan con lai.
-    # Day chinh la kieu that bai ma de tai sinh ra de loai bo.
+    # Adversarial run: EXCLUDED first, then ELIGIBLE, then everything else.
+    # This is exactly the failure mode this project exists to filter out.
     adversarial = {}
     for tid, docs in real.items():
         adversarial[tid] = {

@@ -1,22 +1,20 @@
-"""Phase 3 buoc 2 — xuat canonical store ra JSONL cho Pyserini.
+"""Phase 3 step 2 — export the canonical store to JSONL for Pyserini.
 
-    python -m src.retrieval.export_corpus                 # ban base
-    python -m src.retrieval.export_corpus --with-criteria # ban de ablate
+    python -m src.retrieval.export_corpus                 # base variant
+    python -m src.retrieval.export_corpus --with-criteria # ablation variant
 
-Pyserini nhan `JsonCollection`: moi dong mot document dang
+Pyserini expects `JsonCollection`: one document per line,
     {"id": "NCT00000102", "contents": "..."}
 
-HAI DIEU BAT BUOC
------------------
-1. Dung BULK query, khong lap get_trial(). Da do tren corpus that:
-   vong lap get_trial() mat 2,3 phut (5 truy van/trial x 375.580);
-   mot cau GROUP_CONCAT duy nhat mat 4 giay.
-
-2. Noi dung phai KHOP CHINH XAC store.retrieval_text(). Ham do la nguon su
-   that duy nhat ve "van ban nao duoc dem di index". Neu bulk query o day lech
-   khoi no thi Phase 5 (dense) se index van ban KHAC Phase 3, va ca thang
-   ablation mat hieu luc — bac 2 se khac bac 1 o hai thu cung luc thay vi mot.
-   Vi vay co --verify doi chieu tren mau ngau nhien.
+Two hard requirements:
+1. BULK query, never a get_trial() loop. Measured on the real corpus: the
+   get_trial() loop takes 2.3 minutes (5 queries/trial x 375,580); one
+   GROUP_CONCAT query takes 4 seconds.
+2. Contents must match store.retrieval_text() EXACTLY — that function is the
+   single source of truth for "what text gets indexed". Any drift here means
+   Phase 5 (dense) indexes different text than Phase 3, invalidating the
+   whole ablation ladder (rung 2 would differ from rung 1 in two things, not
+   one). Hence --verify, which checks a random sample.
 """
 
 from __future__ import annotations
@@ -31,7 +29,7 @@ import time
 
 from src.corpus.store import get_trial, open_db, retrieval_text
 
-# Thu tu cot phai trung thu tu ghep trong retrieval_text():
+# Column order must match the join order in retrieval_text():
 #   title, summary, conditions, interventions, mesh, keywords
 BULK_SQL = """
 SELECT t.nct_id, t.title, t.summary,
@@ -46,15 +44,15 @@ FROM trials t
 
 def build_contents(row: sqlite3.Row | tuple, with_criteria: bool = False,
                    boost: int = 1) -> str:
-    """Ghep van ban index tu mot dong bulk query.
+    """Build the indexed text from one bulk-query row.
 
-    boost = 1  -> thu tu goc, khop y het retrieval_text(get_trial(...)).
-    boost > 1  -> lap lai title + conditions `boost` lan va dua len dau.
-                  Lucene khong cho dat trong so truong luc search, nen day la
-                  cach xap xi chuan: tang tan suat term = tang diem BM25.
+    boost = 1  -> original order, matches retrieval_text(get_trial(...)) exactly.
+    boost > 1  -> repeats title + conditions `boost` times up front. Lucene
+                  has no per-field weighting at search time, so this
+                  approximates it: higher term frequency raises the BM25 score.
 
-    with_criteria them criteria_raw vao cuoi. Do la bien the THANG o Phase 3
-    (elig nDCG@10 0.1600 -> 0.2070), trai voi ghi chu trong store.retrieval_text().
+    with_criteria appends criteria_raw — the WINNING variant in Phase 3
+    (elig nDCG@10 0.1600 -> 0.2070), contrary to store.retrieval_text()'s own note.
     """
     _, title, summary, cond, intv, mesh, kw, crit = row
     if boost > 1:
@@ -68,7 +66,7 @@ def build_contents(row: sqlite3.Row | tuple, with_criteria: bool = False,
 
 
 def verify(conn: sqlite3.Connection, n: int = 200, seed: int = 0) -> int:
-    """Doi chieu bulk query voi retrieval_text() tren mau ngau nhien."""
+    """Check the bulk query against retrieval_text() on a random sample."""
     ids = [r[0] for r in conn.execute("SELECT nct_id FROM trials")]
     random.Random(seed).shuffle(ids)
     ids = ids[:n]
@@ -89,7 +87,7 @@ def verify(conn: sqlite3.Connection, n: int = 200, seed: int = 0) -> int:
 
 def export(conn: sqlite3.Connection, out_dir: str, with_criteria: bool,
            boost: int = 1, shard_size: int = 100_000) -> tuple[int, int]:
-    """Ghi JSONL, chia nhieu shard de Pyserini index song song."""
+    """Write JSONL, sharded so Pyserini can index in parallel."""
     os.makedirs(out_dir, exist_ok=True)
     for f in os.listdir(out_dir):
         if f.endswith(".jsonl"):
@@ -105,8 +103,8 @@ def export(conn: sqlite3.Connection, out_dir: str, with_criteria: bool,
                       "w", encoding="utf-8")
         contents = build_contents(row, with_criteria, boost)
         if not contents.strip():
-            # Trial khong co van ban nao de index. Van ghi ra de tong so doc
-            # trong index khop 375.580 — thieu doc thi recall bi tinh sai.
+            # Trial has no text to index. Still written, so the index's total
+            # doc count matches 375,580 — a missing doc would miscompute recall.
             empty += 1
         fh.write(json.dumps({"id": row[0], "contents": contents},
                             ensure_ascii=False) + "\n")

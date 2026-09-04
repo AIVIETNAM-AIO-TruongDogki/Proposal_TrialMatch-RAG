@@ -1,17 +1,10 @@
-"""Phase 8 buoc 5 — gop quyet dinh muc tieu chi thanh quyet dinh muc TRIAL.
+"""Phase 8 step 5 — aggregate criterion-level decisions into a TRIAL-level decision.
 
-LUAT GOP LA THAM SO TU DO, KHONG PHAI CHI TIET CAI DAT
--------------------------------------------------------
-No AN HUONG TRUC TIEP toi con so tieu de. Neu chon mot luat roi giau trong
-code thi bao cao cuoi se khong phan biet duoc "suy luan eligibility hoat dong"
-voi "luat gop nay tinh co hop voi qrels". Vi vay: luat duoc dat ten, khai bao
-tuong minh, va CO THE THAY BANG CO — de Phase 11 ablate chinh no.
-
-`unverifiable` KHONG duoc coi la vi pham
------------------------------------------
-Do la ca diem cua ba trang thai. Mot trial co 5 tieu chi khong kiem chung duoc
-thi KHONG bi loai — no bi xep sau mot trial da kiem du, nhung van con trong
-danh sach. Coi `unverifiable` nhu `violated` la quay ve nhi phan bang cua sau.
+The aggregation rule is a named, swappable parameter, not a hidden implementation
+detail — it directly shapes the headline number, and Phase 11 ablates it. Treat
+`unverifiable` as neither a pass nor a violation: it demotes a trial's rank but
+never disqualifies it (collapsing it into `violated` would be a binary rule
+wearing three-state clothing).
 """
 
 from __future__ import annotations
@@ -20,32 +13,24 @@ import re
 
 RULES = ("strict", "lenient", "count")
 
-DISQUALIFIED = 0.0    # bi loai — gia tri RIENG, khong trial nao khac cham toi
-_MIN = 1e-6           # san cho trial KHONG bi loai
+DISQUALIFIED = 0.0    # disqualified — a value no other trial's score reaches
+_MIN = 1e-6           # floor for a trial that is NOT disqualified
 
-# Tieu chi mo dau bang mot phu dinh la tieu chi LOAI TRU ve mat chuc nang, du
-# blob goc khong co header "Exclusion Criteria:". Dinh dang NCI cu viet ca hai
-# loai thanh mot danh sach phang duoi cac header nhu "PATIENT CHARACTERISTICS:",
-# phan biet nhau bang the phu dinh: "Histologically confirmed X" la thu nhan,
-# "No prior chemotherapy" la loai tru. Parser gan `unknown` cho ca hai — dung
-# theo nghia CAU TRUC (khong co header), nhung `lenient` doc no theo nghia
-# NGU NGHIA va vi vay bo sot nhung tieu chi loai tru that.
+# A criterion opening with a negation is functionally exclusionary even when
+# the source has no "Exclusion Criteria:" header (older NCI-style trials list
+# both under one header, e.g. "PATIENT CHARACTERISTICS:"). The parser tags
+# these `unknown`, which is structurally correct but semantically wrong for
+# `lenient`, which then misses real exclusion criteria.
 _NEG_LEAD_RE = re.compile(r"^\s*(?:no|not|none|without|absence of|free of)\b", re.I)
 
 
 def effective_section(d: dict) -> str | None:
-    """Section dung cho luat gop — suy ra cuc phu dinh khi parser tra `unknown`.
+    """Section used for aggregation — infers exclusion from negation when the parser tags `unknown`.
 
-    Tach roi khoi `section` da luu trong DB CO CHU DICH: `section` la su that
-    ve CAU TRUC (criterion nay nam duoi header nao), con ham nay la mot suy
-    dien NGU NGHIA. Tron hai thu vao nhau trong DB se lam mat kha nang do xem
-    suy dien nay dung bao nhieu. Vi vay no song o day, co ten, va Phase 11
-    ablate duoc bang cach goi `trial_score(..., infer_section=False)`.
-
-    Doc `criterion_quote` chu khong doc van ban tieu chi goc, de `trial_score`
-    khong can ket noi DB. Do tren smoke test: 98,6% trich dan bat dau dung tu
-    dau tieu chi, nen proxy nay sai ~1,4% — va chi ap dung cho 4,5% tieu chi
-    mang nhan `unknown`, tuc phoi nhiem tong ~0,06%.
+    Kept separate from the DB's `section` (a structural fact, not a semantic
+    guess) so Phase 11 can ablate this inference via
+    `trial_score(..., infer_section=False)`. Reads `criterion_quote` rather
+    than the raw criterion text so this stays DB-free.
     """
     sec = d.get("section")
     if sec in ("inclusion", "exclusion"):
@@ -56,14 +41,10 @@ def effective_section(d: dict) -> str | None:
 
 
 def _spread(raw: float, lo: float, hi: float) -> float:
-    """Anh xa `raw` tuyen tinh vao [_MIN, 1] — don dieu, khong bao gio cham 0.
+    """Linearly rescale `raw` into [_MIN, 1] — monotonic, never touches 0.
 
-    Ban truoc tra `max(base - penalty, 1e-6)`, va `base - penalty` AM bat cu
-    khi nao `unv > 2*sat`. Voi `unverifiable` chiem ~68% nhan — dung nhu thiet
-    ke ba trang thai mong doi — dieu do la BINH THUONG chu khong phai ngoai le:
-    ca ba trial trong smoke test deu cham san. Moi trial hoa nhau o 1e-6 thi
-    xep hang roi het ve tie-break truy hoi va tang eligibility do duoc BANG 0.
-    Ep vao [_MIN, 1] giu nguyen thu tu ma van tach duoc cac trial ra.
+    The old `max(base - penalty, 1e-6)` went negative whenever unv > 2*sat,
+    collapsing most trials to the same floor score and erasing the ranking.
     """
     z = (raw - lo) / (hi - lo)
     return _MIN + (1.0 - _MIN) * min(max(z, 0.0), 1.0)
@@ -71,21 +52,17 @@ def _spread(raw: float, lo: float, hi: float) -> float:
 
 def trial_score(decisions: list[dict], rule: str = "strict",
                 infer_section: bool = True) -> float:
-    """Diem xep hang cua mot trial tu cac quyet dinh tieu chi da qua kiem chung.
+    """Ranking score for one trial from its verified criterion-level decisions.
 
-    strict  — mot `violated` bat ky (o BAT KY muc nao) => loai (diem 0).
-              Con lai: uu tien trial co nhieu tieu chi da xac nhan `satisfied`
-              va it `unverifiable`.
-    lenient — chi `violated` o tieu chi LOAI TRU moi loai. Vi pham tieu chi
-              nhan (inclusion) chi bi tru diem. Phan anh thuc te lam sang:
-              tieu chi nhan thuong mem hon tieu chi loai tru.
-    count   — khong loai ai ca; xep hang THUAN theo ty le satisfied, khong
-              phat `unverifiable`. Duong co so de biet phan "loai bo" dong gop
-              bao nhieu; neu no cong them hinh phat thi no khong con la duong
-              co so nua ma la mot luat gop thu ba.
+    strict  — any `violated` decision (any section) disqualifies the trial;
+              otherwise rank by more `satisfied`, fewer `unverifiable`.
+    lenient — only an EXCLUSION-criterion `violated` disqualifies; violating an
+              inclusion criterion only costs points (matches clinical practice).
+    count   — no disqualification, ranks purely by satisfied ratio; the
+              no-penalty baseline for measuring what the other rules add.
 
-    `infer_section=False` tat suy dien cuc phu dinh — de ablate xem no dang
-    doi bao nhieu ket luan cua `lenient`.
+    `infer_section=False` disables the negation-based section inference, to
+    ablate how much of `lenient`'s behavior it accounts for.
     """
     if not decisions:
         return DISQUALIFIED
@@ -105,8 +82,8 @@ def trial_score(decisions: list[dict], rule: str = "strict",
     if rule == "count":
         return _spread(sat / n, 0.0, 1.0)
 
-    # Trial kiem duoc nhieu hon duoc xep truoc trial phan lon la unverifiable.
-    # `unverifiable` chi HA THAP thu hang, khong loai — xem docstring module.
+    # More-verified trials rank ahead of mostly-unverifiable ones; `unverifiable`
+    # only demotes rank, never disqualifies — see module docstring.
     raw = (sat - 0.5 * unv) / n
     lo = -0.5
     if rule == "lenient":
@@ -117,11 +94,10 @@ def trial_score(decisions: list[dict], rule: str = "strict",
 
 def rerank_by_eligibility(base_run: dict, decisions_by: dict, rule: str = "strict",
                           keep_unjudged: bool = True) -> dict:
-    """Xep lai run bang diem eligibility, giu diem truy hoi lam tie-break.
+    """Re-rank a run by eligibility score, keeping retrieval score as tie-break.
 
-    Trial khong co quyet dinh nao (ngoai top-N da suy luan) duoc giu NGUYEN
-    thu tu phia sau thay vi bi vut: vut chung se lam recall tut mot cach gia
-    tao va lam bac 5 trong tot hon thuc te.
+    Trials outside the reasoned top-N keep their original relative order rather
+    than being dropped — dropping would artificially deflate recall and flatter rung 5.
     """
     out: dict[str, dict[str, float]] = {}
     for tid, docs in base_run.items():
@@ -132,8 +108,8 @@ def rerank_by_eligibility(base_run: dict, decisions_by: dict, rule: str = "stric
             key = (tid, nct)
             if key in decisions_by:
                 elig = trial_score(decisions_by[key], rule)
-                # Trial da suy luan luon dung TREN trial chua suy luan cung diem,
-                # va thu tu truy hoi goc pha the hoa trong noi bo nhom.
+                # A reasoned trial always outranks an unreasoned one; retrieval
+                # order breaks ties within each group.
                 new[nct] = 1000.0 + elig * 100.0 + (n - i) / (n + 1)
             elif keep_unjudged:
                 new[nct] = (n - i) / (n + 1)

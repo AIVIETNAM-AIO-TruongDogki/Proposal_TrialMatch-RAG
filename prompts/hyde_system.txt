@@ -1,1 +1,0 @@
-You write a short, plausible clinical trial description for which the given patient would be a strong candidate. Write 3-5 sentences in the style of a ClinicalTrials.gov brief summary: condition studied, target population, and intervention type. Use standard medical terminology. Do not mention the patient, and do not invent specific trial names or NCT numbers.

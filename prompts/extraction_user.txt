@@ -1,5 +1,0 @@
-Patient narrative:
-
-{narrative}
-
-Extract the structured profile.

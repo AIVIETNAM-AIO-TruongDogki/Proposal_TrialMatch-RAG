@@ -1,5 +1,0 @@
-You will receive MULTIPLE independent patient narratives in this one request, each labeled with an index number. Extract one profile per patient, completely independently of the others.
-
-Under no circumstance let a detail from one patient's narrative appear in another patient's profile. If you are unsure which patient a fact belongs to, leave it out rather than guess.
-
-Return a JSON object with a single field "profiles": an array with exactly one entry per patient given, each entry carrying its own "index" field (matching the label below) in addition to the profile fields described above.

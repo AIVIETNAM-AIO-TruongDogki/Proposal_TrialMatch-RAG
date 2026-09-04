@@ -1,13 +1,13 @@
-"""Phase 10 — bao ve han ngach Gemini VA do dong thoi cho demo web song.
+"""Phase 10 — guard the Gemini quota AND concurrency for the live web demo.
 
-Demo la nguoi tieu thu MOI tren cung pool khoa (`GEMINI_API_KEY_*`) dang phuc
-vu Phase 4-8. Khong bao ve thi mot demo mo cho internet co the am tham nuot
-het han ngach ma chinh pipeline nghien cuu con dang can — day la rui ro that
-duoc neu ro trong ke hoach, khong phai mot tinh nang phu.
+The demo is a NEW consumer on the same key pool (`GEMINI_API_KEY_*`) already
+serving Phase 4-8. Without a guard, a demo open to the internet could
+silently eat quota the research pipeline still needs — a real risk flagged
+in the plan, not a nice-to-have.
 
-V1 co chu dich: tran ngay ghi file (song sot qua restart) + tran/IP/gio trong
-bo nho + gioi han dong thoi trong tien trinh. Khong Redis, khong hang doi
-ngoai — du cho luu luong demo, khong danh cho traffic that.
+v1 is deliberately simple: a daily cap in a file (survives restarts) + an
+in-memory per-IP/hour cap + an in-process concurrency limit. No Redis, no
+external queue — enough for demo traffic, not real traffic.
 """
 
 from __future__ import annotations
@@ -24,12 +24,13 @@ DEFAULT_CONCURRENCY = 2
 
 
 class QuotaGuard:
-    """Tran ngay (file) + tran/IP/gio (bo nho).
+    """Daily cap (file) + per-IP/hour cap (memory).
 
-    `reserve()`/`commit()` KHONG khoa nguyen tu qua hai loi goi — voi gioi han
-    dong thoi 2 (xem ConcurrencyGuard) va tran ngay du du so voi chi phi mot
-    request (~6 loi goi), cua so dua giua hai request chay sat nhau la khong
-    dang ke cho v1. Sua thanh khoa that neu sau nay chay nhieu worker.
+    `reserve()`/`commit()` are NOT atomically locked across the two calls —
+    with a concurrency limit of 2 (see ConcurrencyGuard) and a daily cap
+    generous relative to one request's cost (~6 calls), the race window
+    between two near-simultaneous requests is negligible for v1. Add a real
+    lock if this ever runs multiple workers.
     """
 
     def __init__(self, cap_path: str, daily_cap: int = DEFAULT_DAILY_CAP,
@@ -57,8 +58,8 @@ class QuotaGuard:
         return today, int(blob.get("calls_used", 0))
 
     def _save(self) -> None:
-        # Ghi nguyen tu — dung khuon tmp+fsync+replace da dung o reason.save_cache,
-        # de bo dem khong bao gio bi cat cut giua chung neu tien trinh chet.
+        # Atomic write — same tmp+fsync+replace pattern as reason.save_cache,
+        # so the counter is never truncated mid-write if the process dies.
         os.makedirs(os.path.dirname(self.cap_path) or ".", exist_ok=True)
         tmp = self.cap_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -85,7 +86,7 @@ class QuotaGuard:
         return len(q) < self.per_ip_per_hour
 
     def reserve(self, ip: str, estimated_calls: int) -> tuple[bool, str | None]:
-        """Goi TRUOC khi chay pipeline. False -> tu choi ngay, khong ton loi goi nao."""
+        """Call BEFORE running the pipeline. False -> reject immediately, no calls spent."""
         self._roll_day()
         if not self._ip_ok(ip):
             return False, "vuot gioi han request/gio cho demo nay — thu lai sau"
@@ -94,7 +95,7 @@ class QuotaGuard:
         return True, None
 
     def commit(self, ip: str, actual_calls: int) -> None:
-        """Goi SAU khi pipeline chay xong, voi so loi goi THAT SU da dung."""
+        """Call AFTER the pipeline finishes, with the ACTUAL number of calls used."""
         self._roll_day()
         self._used += actual_calls
         self._ip_hits[ip].append(time.time())
@@ -102,11 +103,11 @@ class QuotaGuard:
 
 
 class ConcurrencyGuard:
-    """Gioi han so request /match dong thoi — tu choi NGAY thay vi xep hang.
+    """Limits concurrent /match requests — rejects IMMEDIATELY instead of queuing.
 
-    Ly do khong dung asyncio.Semaphore truc tiep: Semaphore.acquire() CHAN cho
-    toi khi co cho trong, con o day muon TU CHOI ngay lap tuc (429) khi vuot
-    tran — mot hang doi that la qua tay cho v1 (xem "Pham vi" trong ke hoach).
+    Not a plain asyncio.Semaphore: Semaphore.acquire() BLOCKS until a slot
+    frees up, but this needs to REJECT immediately (429) once the limit is
+    hit — a real queue would be overkill for v1 (see "Scope" in the plan).
     """
 
     def __init__(self, limit: int = DEFAULT_CONCURRENCY):

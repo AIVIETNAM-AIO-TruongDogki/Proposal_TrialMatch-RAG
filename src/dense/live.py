@@ -1,17 +1,17 @@
-"""Phase 10 — index dense THUONG TRU cho demo web song.
+"""Phase 10 — a PERSISTENT dense index for the live web demo.
 
-`src/dense/search.py::search()` la mot batch script: no load lai toan bo npz
-+ khoi tao lai encoder tu dau MOI LAN goi, roi CHU DONG giai phong encoder
-truoc khi cap phat ma tran corpus (xem `del enc` o do). Hop ly cho 75 truy van
-nghien cuu chay MOT LAN, khong dung duoc cho phuc vu web — moi request se mat
-thoi gian load 816MB + khoi tao lai transformer.
+`src/dense/search.py::search()` is a batch script: it reloads the whole npz
+and reinitializes the encoder EVERY call, then frees the encoder before
+allocating the corpus matrix (see `del enc` there). Fine for 75 research
+queries run once; unusable for serving the web — every request would pay to
+load 816MB and reinit a transformer.
 
-`LiveDenseIndex` giu CA vector corpus (chuan hoa MOT LAN luc khoi dong) LAN
-encoder song song thuong tru trong GPU/CPU suot vong doi tien trinh. Day la
-thay doi HA TANG (batch-script -> service thuong tru), khong phai thay doi
-THUAT TOAN: cung model, cung chunking 320/40, cung diem = max qua chunk, cung
-matmul chinh xac khong FAISS da chon o Phase 5 (xem docstring cua search.py
-ve ly do tu choi FAISS/HNSW — quyet dinh do khong bi mo lai o day).
+`LiveDenseIndex` keeps both the corpus vectors (normalized ONCE at startup)
+and the encoder resident in GPU/CPU memory for the process lifetime. This is
+an INFRASTRUCTURE change (batch script -> long-lived service), not an
+ALGORITHM change: same model, same 320/40 chunking, same max-across-chunks
+score, same exact matmul search chosen in Phase 5 (see search.py's docstring
+for why FAISS/HNSW was rejected — that decision isn't reopened here).
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ class LiveDenseIndex:
         self.n_docs = len(ids)
         self.enc = encode.load_encoder(model_key, device)
 
-        # Chuan hoa MOT LAN o day va giu nguyen suot vong doi tien trinh — khac
-        # search.py, noi moi lan goi la mot lan chay doc lap nen chuan hoa lai
-        # khong ton kem gi (chi 75 truy van/lan). O day co the co hang tram
-        # request, nen chuan hoa lai moi request la lang phi khong can thiet.
+        # Normalized ONCE here and kept for the process lifetime — unlike
+        # search.py, where each run is independent so renormalizing costs
+        # nothing (only 75 queries/run). Here there can be hundreds of
+        # requests, so renormalizing per request would be needless waste.
         Vt = torch.tensor(V, device=device, dtype=torch.float16)
         for s in range(0, Vt.shape[0], 200_000):
             Vt[s:s + 200_000] = torch.nn.functional.normalize(
@@ -45,9 +45,9 @@ class LiveDenseIndex:
               f"{Vt.shape[1]}d thuong tru tren {device}")
 
     def query(self, text: str, depth: int = 1000) -> dict[str, float]:
-        """Ma hoa MOT truy van moi va tra ve {nct_id: diem}, diem = max qua chunk.
+        """Encode ONE new query, return {nct_id: score}, score = max across chunks.
 
-        Khong load lai gi ca — chi ham nay chay tren duong request.
+        Nothing gets reloaded — this is the only function on the request path.
         """
         q = self.enc.encode_query([text])
         Qt = torch.tensor(np.asarray(q, dtype=np.float32), device=self.device)

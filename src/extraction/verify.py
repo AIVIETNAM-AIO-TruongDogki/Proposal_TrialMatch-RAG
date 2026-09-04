@@ -1,49 +1,21 @@
-"""Phase 4 buoc 2 — kiem chung co hoc. Day la chot chan quan trong nhat.
+"""Phase 4 step 2 — mechanical verification. The most important guardrail here.
 
-Model 3-8B chay cuc bo se bia. Khong ngan duoc. Nhung PHAT HIEN va VUT BO duoc
-phan bia, va ty le bi vut chinh la mot con so bao cao duoc.
+A locally-run 3-8B model fabricates. That can't be prevented, but it CAN be
+detected and dropped — and the drop rate is itself a reportable number. Every
+extracted value carries `evidence`, which must be a verbatim substring of the
+narrative, matched after whitespace/case normalization (same approach and
+philosophy as store.verify_quote()).
 
-Nguyen tac: moi gia tri trich ra deu mang mot `evidence`, va `evidence` phai la
-CHUOI CON nguyen van cua benh an. So khop sau khi chuan hoa khoang trang va ha
-chu thuong — dung khuon mau cua store.verify_quote(), cung mot triet ly: bien
-mot loi hua thanh mot phep do.
+Free gold labels: age/sex are regex-extracted from the narrative's first 220
+characters as a check (measured on the dev set: age 75/75, sex 74/75).
 
-NHAN VANG MIEN PHI
-------------------
-Tuoi va gioi gan nhu luon nam o cau dau benh an. Regex duoi day da do tren ca
-75 topic dev: **tuoi 75/75, gioi 74/75**. Truong hop trot duy nhat la topic
-2021_14 ("70 y/o with COPD...").
-
-DINH CHINH (2026-08-30, phat hien khi hand-audit): 2021_14 KHONG phai benh an
-"khong noi gioi tinh" nhu ghi chu cu khang dinh. Benh an CO noi — "She has had
-decreased appetite, PO intake, energy level at home" (vi tri 566) — nhung
-gold_age_sex() chi doc 220 ky tu DAU nen khong thay. Day la gioi han cua nhan
-vang, khong phai dac diem cua benh an.
-
-Bay van con gia tri, nhung vi mot ly do KHAC: gemini-3.6-flash tra ve
-sex="female" voi evidence="Daughter". Ket luan DUNG, can cu SAI — co con gai
-khong chung minh benh nhan la nu. Do la loi suy luan ma kiem tra chuoi con
-khong bat duoc (evidence co that, du ngan), nen `fabricated` o day nen doc la
-"can cu dang ngo" chu khong phai "gia tri bia dat". Xem FABRICATION_TRAPS.
-
-PHEP DO NAY KHONG BAT DUOC GI — DOC TRUOC KHI TIN VAO CON SO
-------------------------------------------------------------
-Kiem tra chuoi con xac nhan rang EVIDENCE co that trong benh an. No KHONG xac
-nhan rang `name` suy ra duoc tu evidence do. Mot model hoan toan co the trich
-dan dung nguyen van roi gan cho no mot nhan sai.
-
-Da thay dung truong hop nay o model 3B, topic 2021_2:
-
-    name:     "hypertrophic cardiomyopathy"
-    evidence: "left ventricular hypertrophy with cavity dilation and severe
-               global hypokinesis"          <- co that trong benh an
-
-Benh an KHONG he noi benh co tim phi dai. Model da chan doan thay vi trich
-xuat — dung dieu invariant 2 cam — va phep kiem tra co hoc cho no di qua.
-
-Vi vay `grounding` la dieu kien CAN, khong phai dieu kien DU. Hand-audit 25
-benh an o buoc 5 ton tai chinh xac vi lo hong nay, va no khong the tu dong hoa
-bang du lieu hien co. Dung bao cao grounding nhu the no do duoc tinh dung.
+THIS CHECK DOES NOT CATCH EVERYTHING — read before trusting the number.
+Substring verification confirms the EVIDENCE is real; it does NOT confirm
+`name` is actually inferable from it. A model can quote correctly and still
+attach the wrong label to the quote (diagnosing instead of extracting, which
+invariant 2 forbids) — mechanical grounding lets that through. `grounding` is
+a NECESSARY condition, not a SUFFICIENT one; the hand-audit in step 5 exists
+precisely because of this gap and can't be automated away.
 """
 
 from __future__ import annotations
@@ -59,7 +31,7 @@ from src.extraction.schema import LIST_FIELDS, SCALAR_FIELDS
 
 PROFILE_DIR = "data/profiles"
 
-# --- Nhan vang tu regex (da do: tuoi 75/75, gioi 74/75 tren dev) --------------
+# --- Regex gold labels (measured: age 75/75, sex 74/75 on dev) --------------
 
 _UNIT = r"(day|week|month|year)"
 _AGE_PATS = [
@@ -74,12 +46,12 @@ _SEX_F = re.compile(r"\b(?:woman|female|lady|girl)\b", re.I)
 _PRO_M = re.compile(r"\b(?:he|his|him)\b", re.I)
 _PRO_F = re.compile(r"\b(?:she|her|hers)\b", re.I)
 
-# Benh an co noi gioi tinh nhung o NGOAI 220 ky tu dau (xem dinh chinh trong
-# docstring module), nen gold_age_sex() khong thay. Giu lai lam bay vi model
-# tra loi dung ma can cu sai ("Daughter" khong chung minh benh nhan la nu).
+# The narrative does state sex, just outside gold_age_sex()'s 220-char
+# window. Kept as a trap because the model answers correctly on wrong grounds
+# ("Daughter" doesn't prove the patient is female).
 FABRICATION_TRAPS = {"2021_14": "sex"}
 
-# Dau hieu phu dinh — dung do xem model co bat duoc `negated` khong.
+# Negation cues — used to check whether the model catches `negated`.
 NEG_CUES = re.compile(
     r"\b(?:no\s+(?:history|evidence|signs?|prior)|denies|without|"
     r"negative\s+for|ruled\s+out|not\s+(?:on|taking)|free\s+of|absence\s+of)\b",
@@ -87,7 +59,7 @@ NEG_CUES = re.compile(
 
 
 def gold_age_sex(text: str) -> tuple[int | None, str | None, str | None]:
-    """(tuoi, don_vi, gioi) suy tu regex. None = benh an khong noi."""
+    """(age, unit, sex) inferred by regex. None = narrative doesn't say."""
     head = text[:220]
     age = unit = None
     for p in _AGE_PATS:
@@ -117,16 +89,16 @@ def gold_age_sex(text: str) -> tuple[int | None, str | None, str | None]:
 # --- Kiem chung -------------------------------------------------------------
 
 def norm(s: str) -> str:
-    """Chuan hoa y het store.verify_quote(): gop khoang trang, ha chu thuong.
+    """Normalize exactly like store.verify_quote(): collapse whitespace, lowercase.
 
-    Benh an goc co the xuong dong giua chung con model tra ve mot dong lien;
-    so khop tho se bao sai cho mot trich dan hoan toan dung.
+    The narrative can wrap mid-sentence while the model returns one line; a
+    raw comparison would falsely reject an otherwise-correct quote.
     """
     return " ".join(s.split()).lower()
 
 
-# Do dai toi da cua mot trich dan con duoc coi la "chi ra duoc cho nao".
-# Benh an trung binh 135 tu; mot evidence 60 tu khong dinh vi duoc gi ca.
+# Max length for a quote to still count as "pointing at somewhere specific".
+# Narratives average 135 words; a 60-word evidence span pinpoints nothing.
 MAX_EVIDENCE_WORDS = 30
 
 
@@ -136,20 +108,20 @@ def grounded(evidence: str, narrative: str) -> bool:
 
 
 def localized(evidence: str) -> bool:
-    """Trich dan co du NGAN de thuc su la bang chung khong?
+    """Is the quote short enough to actually count as evidence?
 
-    `grounded` mot minh la thuoc do CO THE LACH: model trich nguyen ca benh an
-    cho moi truong se dat 100% grounding ma khong chi ra duoc gi. Da thay dung
-    hien tuong do o model 3B. Bao cao hai cot canh nhau thay vi gop lam mot.
+    `grounded` alone is gameable: quoting the whole narrative for every field
+    scores 100% grounding while pointing at nothing. Observed on a 3B model.
+    Reported as a separate column rather than folded into `grounded`.
     """
     return len(evidence.split()) <= MAX_EVIDENCE_WORDS
 
 
 def schema_ok(profile: dict) -> bool:
-    """Kiem tra thu cong thay vi keo them phu thuoc `jsonschema`.
+    """Hand-rolled check instead of pulling in the `jsonschema` dependency.
 
-    Chi kiem nhung gi thuc su rang buoc y nghia: danh sach bat buoc ton tai,
-    enum dung, va MOI muc deu co evidence.
+    Checks only what's semantically load-bearing: required lists exist, enums
+    are valid, and every item carries evidence.
     """
     if not isinstance(profile, dict):
         return False
@@ -180,10 +152,10 @@ def schema_ok(profile: dict) -> bool:
 
 
 def verify_profile(profile: dict, narrative: str) -> tuple[dict, list[dict]]:
-    """Vut bo moi truong co evidence khong phai chuoi con that.
+    """Drop every field whose evidence isn't a real substring.
 
-    Tra ve (ho_so_sach, danh_sach_bi_loai). Danh sach bi loai duoc ghi ra dia
-    de hand-audit o buoc 5 xem duoc model da bia CAI GI, khong chi bao nhieu.
+    Returns (clean_profile, dropped_list). The dropped list is written to disk
+    so the step-5 hand-audit can see WHAT the model fabricated, not just how much.
     """
     clean: dict = {}
     dropped: list[dict] = []
@@ -243,7 +215,7 @@ def score_model(model: str, year: int, topics: dict[str, str],
             continue
         valid += 1
 
-        # Grounding tinh tren ho so THO, truoc khi loc.
+        # Grounding is measured on the RAW profile, before filtering.
         raw_n = n_values(prof)
         clean, dropped = verify_profile(prof, narrative)
         tot_vals += raw_n
@@ -254,8 +226,8 @@ def score_model(model: str, year: int, topics: dict[str, str],
             1 for f in LIST_FIELDS for it in (clean.get(f) or [])
             if localized(it["evidence"]))
 
-        # Tuoi/gioi so voi nhan vang — tinh tren ho so DA LOC, vi do moi la
-        # thu he thong that su dung.
+        # Age/sex vs. gold — measured on the FILTERED profile, since that's
+        # what the system actually uses.
         g_age, g_unit, g_sex = gold_age_sex(narrative)
         if g_age is not None:
             age_tot += 1
@@ -267,12 +239,12 @@ def score_model(model: str, year: int, topics: dict[str, str],
             if (clean.get("sex") or {}).get("value") == g_sex:
                 sex_hit += 1
 
-        # Bay bia dat: benh an khong noi, model van dien.
+        # Fabrication trap: narrative doesn't say it, model filled it in anyway.
         trap = FABRICATION_TRAPS.get(tid)
         if trap and trap in clean:
             fabricated += 1
 
-        # Co bat duoc phu dinh khong?
+        # Did it catch the negation?
         if NEG_CUES.search(narrative):
             neg_topics += 1
             if any(it.get("status") == "negated"
@@ -297,8 +269,8 @@ def score_model(model: str, year: int, topics: dict[str, str],
 
 # --- CLI --------------------------------------------------------------------
 
-# So lan goi Phase 8 can cho tap dev, do tren runs/bm25_best.dev.txt:
-# 75 topic x top-20 trial x 18,0 tieu chi/trial.
+# Phase 8 call count for the dev set, measured on runs/bm25_best.dev.txt:
+# 75 topics x top-20 trials x 18.0 criteria/trial.
 PHASE8_CALLS = 27045
 
 
@@ -314,8 +286,8 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    # Ten model co the chua dau cham (`gemini-3.6-flash`), nen phai cat theo
-    # tien to/hau to co dinh chu khong split(".") — split se cat nham giua ten.
+    # Model names can contain dots (`gemini-3.6-flash`), so strip by fixed
+    # prefix/suffix rather than split(".") — split would cut mid-name.
     prefix, suffix = f"{args.year}.", ".json"
     models = sorted({f[len(prefix):-len(suffix)].replace("_", ":", 1)
                      for f in os.listdir(args.profile_dir)

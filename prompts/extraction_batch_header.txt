@@ -1,1 +1,0 @@
-Extract a structured profile for each of the {n} independent patient narratives below.

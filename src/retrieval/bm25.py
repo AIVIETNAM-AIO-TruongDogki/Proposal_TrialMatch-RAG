@@ -1,16 +1,14 @@
-"""Phase 3 buoc 4 — truy van BM25, sinh run file dinh dang TREC.
+"""Phase 3 step 4 — BM25 retrieval, writes a TREC-format run file.
 
     python -m src.retrieval.bm25 --index indexes/bm25-base --out runs/bm25.dev.txt
     python -m src.retrieval.bm25 --k1 1.2 --b 0.75 --query-mode nodeid ...
 
-NGUYEN TAC CUA BAC 1
---------------------
-Truy van la BENH AN THO, nguyen van. Khong trich xuat thuc the, khong mo rong
-truy van, khong chuan hoa thuat ngu. Do la Phase 4; tron vao day thi bac 1 va
-bac 2 khac nhau o HAI thu cung luc va ablation khong quy duoc cong cho ai.
-
-Ngoai le duy nhat la escape ky tu dac biet cua Lucene — bat buoc ve mat ky
-thuat, va MOI thao tac tren truy van deu duoc dem va in ra.
+Rung 1's principle: the query is the RAW patient narrative, verbatim. No
+entity extraction, no query expansion, no term normalization — that's Phase
+4; mixing it in here would change two things at once between rung 1 and
+rung 2, and an ablation couldn't attribute the gain to either. The only
+exception is Lucene special-character escaping, which is mechanically
+required, and every query transformation is counted and printed.
 """
 
 from __future__ import annotations
@@ -22,18 +20,17 @@ import time
 
 from src.eval import data, run_io
 
-# Ky tu Lucene coi la cu phap truy van. Khong escape thi benh an chua
-# "[**2148-10-1**]" se lam vo bo phan tich truy van.
+# Characters Lucene treats as query syntax. Unescaped, a narrative containing
+# "[**2148-10-1**]" breaks the query parser.
 LUCENE_SPECIAL = re.compile(r'([+\-!(){}\[\]^"~*?:\\/]|&&|\|\|)')
 
-# Dau an danh cua qua trinh khu danh tinh, vd "[**2148-10-1**]".
-# Day la artifact, khong phai noi dung lam sang.
+# De-identification marker, e.g. "[**2148-10-1**]" — an artifact, not clinical content.
 DEID = re.compile(r"\[\*\*.*?\*\*\]")
 
 
 def prepare_query(text: str, mode: str = "raw") -> str:
-    """mode='raw'    : giu nguyen van, chi escape ky tu dac biet Lucene
-       mode='nodeid' : xoa dau an danh truoc khi escape
+    """mode='raw'    : verbatim, only Lucene special chars escaped
+       mode='nodeid' : strips de-id markers before escaping
     """
     if mode == "nodeid":
         text = DEID.sub(" ", text)

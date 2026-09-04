@@ -1,8 +1,11 @@
-rawdata
+rawdata/
 documents
 CLAUDE.md
 IMPLEMENTATION_PLAN.md
-docs
+docs/
+
+run.txt
+plan.txt
 
 .env
 

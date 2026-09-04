@@ -1,61 +1,32 @@
-"""Phase 4 buoc 1 — schema ho so benh nhan, va JSON Schema ep Ollama tuan thu.
+"""Phase 4 step 1 — patient-profile schema, and the JSON Schema constraining Gemini's output.
 
-BA TRANG THAI, KHONG PHAI HAI
------------------------------
-Day la lan dau invariant 2 di vao code: *thong tin benh nhan khong co thi phai
-giu nguyen la khong co.* Ba trang thai phai phan biet rach roi:
-
-    stated   benh an CO noi              "severe aortic stenosis"
-    negated  benh an noi KHONG co        "no history of diabetes"
-    absent   benh an KHONG nhac toi      (truong vang mat hoan toan)
-
-Gop `negated` vao `absent` la loi hay gap nhat va tai hai nhat o phase nay.
-"Benh nhan khong bi tieu duong" la mot su that lam sang co the THOA MAN mot tieu
-chi loai tru; "benh an khong noi gi ve tieu duong" thi khong thoa man gi ca, no
-phai thanh `unverifiable` o Phase 8. Nhap hai cai lam mot la bien mot cau tra
-loi dung thanh mot phong doan.
-
-BA QUY UOC MA SCHEMA NAY AP DAT
--------------------------------
-1. `status` CHI co `present` | `negated`. Khong co gia tri "absent".
-   Do la co y: khong the trich dan bang chung cho mot thu khong duoc nhac toi.
-   `absent` duoc bieu dat bang cach muc do KHONG NAM trong danh sach.
-
-2. Moi gia tri trich duoc deu BAT BUOC co `evidence`. Khong co truong nao mien.
-   Do la thu bien invariant 3 tu loi hua thanh phep do — xem verify.py.
-
-3. KHONG cho phep `null`. Neu cho, ta se nhan duoc ca {"age": null} lan
-   {"age": {"value": null}} va mat kha nang phan biet "da doc va khong thay"
-   voi "chua doc". Vang mat la cach duy nhat de noi "khong co".
-
-`age` va `sex` co y KHONG nam trong `required` o cap goc — mot benh an that su
-co the khong noi tuoi, va model phai duoc phep im lang thay vi doan.
+Three states, not two: a fact is `present`, `negated` (the narrative explicitly denies it), or
+absent from the output (never mentioned). Collapsing `negated` into `absent` throws away a real
+clinical fact needed by Phase 8's eligibility reasoning (invariant 2). `null` is never emitted —
+it would blur "read and found nothing" with "never read".
 """
 
 from __future__ import annotations
 
-import prompts
-
-# Nhom thuc the trich xuat. Thu tu nay dung lai o query.py va o bang bao cao.
+# Extracted entity groups; this order is reused in query.py and report tables.
 LIST_FIELDS = (
-    "conditions",        # chan doan, benh chinh
-    "biomarkers",        # EGFR, HER2, PD-L1, dot bien...
-    "prior_treatments",  # thuoc / phau thuat / xa tri da nhan
-    "labs",              # ket qua xet nghiem co gia tri
-    "comorbidities",     # benh kem
+    "conditions",        # diagnoses, primary conditions
+    "biomarkers",        # EGFR, HER2, PD-L1, mutations...
+    "prior_treatments",  # drugs / surgery / radiation received
+    "labs",              # lab results with values
+    "comorbidities",     # comorbidities
 )
 
 SCALAR_FIELDS = ("age", "sex")
 
-# Truong duoc phep dua vao truy van BM25 o Phase 4 buoc 4.
-# `labs` bi loai: gia tri so ("WBC 11.2") khong phai term truy hoi tot, va
-# `comorbidities` giu lai vi ten benh kem van la tin hieu chu de.
+# Fields allowed into the Phase 4 BM25 query. `labs` excluded — numeric values
+# ("WBC 11.2") are poor query terms; `comorbidities` kept as topical signal.
 QUERY_FIELDS = ("conditions", "biomarkers", "prior_treatments", "comorbidities")
 
 _EVIDENCE = {
     "type": "string",
-    # Do tren model 3B: no tra ve evidence="" ma van hop schema, roi verify.py
-    # phai vut bo mot gia tri dung. Bat do dai toi thieu ngay tu schema.
+    # Measured on a 3B model returning evidence="" yet still schema-valid,
+    # forcing verify.py to discard an otherwise-good value — enforce it here.
     "minLength": 3,
     "description": "Trich NGUYEN VAN tu benh an. Phai la chuoi con dung tung "
                    "chu cua benh an goc, khong dien dat lai, khong tom tat.",
@@ -102,31 +73,46 @@ PROFILE_SCHEMA = {
         },
         **{f: {"type": "array", "items": _ENTITY} for f in LIST_FIELDS},
     },
-    # Chi bat buoc cac danh sach (co the rong). age/sex duoc phep vang mat —
-    # do la cach model noi "benh an khong cho biet", va no la mot cau tra loi
-    # HOP LE, khong phai that bai.
+    # Only the lists are required (can be empty). age/sex may be absent —
+    # that's how the model says "not stated", a valid answer, not a failure.
     "required": list(LIST_FIELDS),
     "additionalProperties": False,
 }
 
-# Noi dung prompt song trong prompts/*.txt, khong phai hang so Python — sua
-# prompt khong con dong nghia voi sua code, va diff tren prompt la diff dung
-# tren prompt.
-SYSTEM_PROMPT = prompts.load("extraction_system")
-USER_TEMPLATE = prompts.load("extraction_user")
+SYSTEM_PROMPT = """You extract structured clinical facts from a patient narrative for clinical trial matching. You are a careful medical information extractor, not a diagnostician.
 
-# --- Goi theo lo (batch) -----------------------------------------------------
-#
-# extract.py goi Gemini mot lan cho N benh an thay vi N lan rieng, de do so
-# request khi dung free tier (5 req/phut, 20 req/ngay — xem
-# docs/decisions/phase4-gemini-backend.md). N benh an DOC LAP voi nhau; addendum
-# duoi day noi ro dieu do va cam tron thong tin giua cac benh an.
-#
-# Moi phan tu tra ve mang them `index` de khop lai DUNG benh an ban dau — khong
-# dua vao thu tu mang tra ve, vi mot loi khop sai se gan ho so cua benh nhan
-# nay cho benh nhan khac, dung dieu invariant 3 (moi ket luan phai co can cu
-# dung nguon) cam.
-BATCH_SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + prompts.load("extraction_batch_addendum")
+Rules, in order of importance:
+
+1. NEVER infer, impute, or guess. Extract only what the narrative literally states. If the narrative does not mention something, leave it out entirely. Omission is a correct answer; guessing is not.
+
+2. Every extracted value MUST carry an `evidence` field containing a VERBATIM substring of the narrative. Copy the exact characters. Do not paraphrase, normalize, expand abbreviations, or fix typos inside `evidence`. If you cannot quote it exactly, do not extract it.
+
+3. Distinguish two different things:
+   - status "present": the narrative says the patient HAS it.
+   - status "negated": the narrative says the patient does NOT have it ("no history of diabetes", "denies chest pain", "ruled out for sepsis").
+   A negation is a clinical fact worth recording. Record it as "negated" with the negating phrase as evidence. Never record it as "present", and never drop it silently.
+
+4. If the narrative does not mention a condition at all, it does not belong in the output in any form.
+
+5. `name` should be the clinical concept in its normal form (e.g. "type 2 diabetes"). Only `evidence` must be verbatim."""
+
+# --- Batched calls -----------------------------------------------------------
+# extract.py sends N narratives per call to cut request count under the free
+# tier. Each result carries its own `index` for matching back — never rely on
+# array order, since a mismatch would attribute one patient's facts to another.
+_EXTRACTION_BATCH_ADDENDUM = """You will receive MULTIPLE independent patient narratives in this one request, each labeled with an index number. Extract one profile per patient, completely independently of the others.
+
+Under no circumstance let a detail from one patient's narrative appear in another patient's profile. If you are unsure which patient a fact belongs to, leave it out rather than guess.
+
+Return a JSON object with a single field "profiles": an array with exactly one entry per patient given, each entry carrying its own "index" field (matching the label below) in addition to the profile fields described above."""
+
+_EXTRACTION_BATCH_HEADER = "Extract a structured profile for each of the {n} independent patient narratives below."
+
+_EXTRACTION_BATCH_ITEM = """--- Patient {index} ---
+
+{narrative}"""
+
+BATCH_SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + _EXTRACTION_BATCH_ADDENDUM
 
 _BATCH_ITEM_SCHEMA = {
     "type": "object",
@@ -137,7 +123,7 @@ _BATCH_ITEM_SCHEMA = {
 
 
 def batch_schema(n: int) -> dict:
-    """Schema cho mot lan goi gom n ho so — PROFILE_SCHEMA cong truong `index`."""
+    """Schema for one call covering n profiles — PROFILE_SCHEMA plus an `index` field."""
     return {
         "type": "object",
         "properties": {
@@ -150,25 +136,21 @@ def batch_schema(n: int) -> dict:
 
 
 def batch_user_prompt(narratives: list[str]) -> str:
-    header = prompts.load("extraction_batch_header").format(n=len(narratives))
-    item_tpl = prompts.load("extraction_batch_item")
-    items = "\n\n".join(item_tpl.format(index=i, narrative=narr)
+    header = _EXTRACTION_BATCH_HEADER.format(n=len(narratives))
+    items = "\n\n".join(_EXTRACTION_BATCH_ITEM.format(index=i, narrative=narr)
                         for i, narr in enumerate(narratives))
     return f"{header}\n\n{items}"
 
 
 def prompt_hash() -> str:
-    """Van tay cua prompt + schema, dung lam mot phan khoa cache.
+    """Fingerprint of prompt + schema, used as part of the cache key.
 
-    Doi prompt hay doi schema thi cache phai hong — neu khong ta se so sanh
-    ket qua cua hai cau hoi khac nhau va tuong la so sanh hai model. Hash tren
-    BATCH_SYSTEM_PROMPT (da bao gom SYSTEM_PROMPT ben trong) vi do la thu
-    extract.py thuc su gui di.
+    Changing either must invalidate the cache — otherwise a result from one
+    prompt gets compared against another as if it were the same experiment.
     """
     import hashlib
     import json
 
-    blob = (BATCH_SYSTEM_PROMPT + prompts.load("extraction_batch_header") +
-            prompts.load("extraction_batch_item") +
+    blob = (BATCH_SYSTEM_PROMPT + _EXTRACTION_BATCH_HEADER + _EXTRACTION_BATCH_ITEM +
             json.dumps(PROFILE_SCHEMA, sort_keys=True))
     return hashlib.sha256(blob.encode()).hexdigest()[:12]
