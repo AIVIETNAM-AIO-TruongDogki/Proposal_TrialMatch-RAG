@@ -72,6 +72,11 @@ function renderTrialCard(card) {
   const el = document.createElement("details");
   el.className = "trial-card";
   el.id = `trial-${card.nct_id}`;
+  // Unverifiable rows are collapsed, not hidden: on the dev sample they are 60%
+  // of all decisions, and one trial had 62 of them — listing each one buries the
+  // handful of criteria that actually decided anything.
+  const decisive = card.criteria.filter((r) => r.label !== "unverifiable");
+  const unknown = card.criteria.filter((r) => r.label === "unverifiable");
   el.innerHTML = `
     <summary>
       <div class="trial-head">
@@ -81,6 +86,7 @@ function renderTrialCard(card) {
           <div class="trial-meta">${escapeHtml(card.phase || "")} ${escapeHtml(card.status || "")}</div>
         </div>
       </div>
+      <div class="headline">${escapeHtml(card.headline || "")}</div>
       <div class="badge-row">
         <span class="badge sat">${card.n_satisfied} satisfied</span>
         <span class="badge vio">${card.n_violated} violated</span>
@@ -88,7 +94,12 @@ function renderTrialCard(card) {
       </div>
     </summary>
     <div class="criteria-table">
-      ${card.criteria.map(renderCriterionRow).join("")}
+      ${decisive.map(renderCriterionRow).join("")}
+      ${unknown.length ? `
+        <details class="unknown-group">
+          <summary>${unknown.length} criteria could not be determined from the available information</summary>
+          ${unknown.map(renderCriterionRow).join("")}
+        </details>` : ""}
     </div>`;
   return el;
 }

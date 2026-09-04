@@ -110,6 +110,8 @@ button:not(:disabled):hover { filter: brightness(1.1); }
 .trial-head .nct { font-family: ui-monospace, monospace; color: var(--muted); font-size: 0.82rem; }
 .trial-head h3 { margin: 2px 0 4px; font-size: 1.02rem; }
 .trial-meta { font-size: 0.8rem; color: var(--muted); }
+/* Verdict never stands alone — it carries how much was actually verified. */
+.headline { margin-top: 8px; font-size: 0.9rem; font-weight: 600; }
 .badge-row { display: flex; gap: 8px; margin-top: 6px; }
 .badge {
   font-size: 0.75rem;
@@ -139,6 +141,15 @@ button:not(:disabled):hover { filter: brightness(1.1); }
 .crit-evidence .tag { font-weight: 600; color: var(--text); }
 .crit-reasoning { font-size: 0.82rem; color: var(--muted); font-style: italic; margin-top: 2px; }
 .unv-note { font-size: 0.82rem; color: var(--unv); font-style: italic; }
+
+/* Collapsed, not dropped: the coordinator can still open it to see what to ask. */
+.unknown-group { margin-top: 8px; }
+.unknown-group > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--unv);
+  padding: 6px 0;
+}
 
 .error-box {
   background: #f6e5e5;
