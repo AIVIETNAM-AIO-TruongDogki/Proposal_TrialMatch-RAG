@@ -15,4 +15,17 @@ dependencies = [
     "requests==2.34.2",
     "scipy==1.18.1",
     "tqdm==4.70.0",
+    # Phase 5/7/8 (dense retrieval, reranking, eligibility reasoning) da dung cac
+    # goi nay tu truoc nhung chua tung khai bao — cai sa trong .venv nhung `uv sync`
+    # tron se xoa mat vi khong nam trong pyproject.toml. Khai bao lai dung ban dang
+    # cai de `uv sync --inexact` tai lap duoc; day la dieu kien de tieu chi thoat
+    # "cold start tren may sach" cua specs/10 la that, khong chi danh cho API moi.
+    "torch==2.13.0",
+    "sentence-transformers==6.0.0",
+    "transformers==5.16.1",
+    "pyserini==2.3.0",
+    # Phase 10 — demo web song.
+    "fastapi==0.141.1",
+    "uvicorn==0.52.4",
+    "sse-starlette==3.4.8",
 ]
