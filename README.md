@@ -19,30 +19,45 @@ reported as `unverifiable`, never guessed.
 
 ## Results
 
-Dev set (TREC 2021, 75 narratives), full 375,580-trial corpus. Full write-up:
-[`paper/trialmatch-rag.tex`](paper/trialmatch-rag.tex); detail + significance tests:
-[`specs/05`](specs/05-dense-retrieval.md)–[`specs/08`](specs/08-eligibility-reasoning.md).
+Held-out test set (TREC 2022, 50 narratives), full 375,580-trial corpus, scored **exactly once**
+with the configuration frozen on dev-2021. Significance: paired bootstrap, 10k resamples.
 
 | Rung | Configuration | elig nDCG@10 | Recall@1000 | Contamination@10 ↓ |
 |---|---|---|---|---|
-| 1 | Lexical (BM25) | 0.2782 | 0.5307 | 0.3240 |
-| 2 | Dense (`qwen3`) | 0.2918 | 0.6050 | 0.2547 |
-| 3 | Hybrid (RRF) | 0.3501 | **0.6490** | 0.3573 |
-| 4 | + reranking — *not adopted* | 0.3356 | n/a | see [specs/07](specs/07-reranking.md) |
-| 5 | **+ eligibility reasoning** | **0.4182** | **0.6490** | **0.2813** |
+| 1 | Lexical (BM25) | 0.3191 | 0.5669 | 0.2100 |
+| 2 | Dense (`qwen3`) | 0.3624 | 0.6120 | 0.1820 |
+| 3 | Hybrid (RRF) | 0.3997 | **0.6912** | 0.2460 |
+| 4 | + reranking — *not adopted* | 0.4103 | n/a † | 0.1880 |
+| 5 | **+ eligibility reasoning** | **0.4641** | **0.6912** | **0.1600** |
+
+† Reranking only reorders the top-N and truncates, so its Recall@1000 isn't comparable.
 
 **Central finding.** Three independent tiers of the pipeline (indexing, querying, model choice) all
-showed the same pattern: improving medical relevance *increased* contamination. Rung 5 reverses that,
-with significance — contamination@10 drops $0.3573\to0.2813$ ($p<0.0001$), at **no** cost to official
-nDCG@10 ($0.5309\to0.5472$, $p=0.31$).
+showed the same pattern on dev: improving medical relevance *increased* contamination. On test that
+pattern is significant too — going dense → hybrid raises official nDCG@10 ($p=0.0019$) while making
+contamination *worse* ($+0.0640$, $p=0.0010$). Rung 5 reverses it: contamination@10 drops
+$0.2460\to0.1600$ ($p<0.0001$) and elig nDCG@10 rises $0.3997\to0.4641$ ($p=0.0048$), at **no** cost
+to official nDCG@10 ($p=0.51$) and with recall untouched.
 
-**On the three-state design specifically:** a forced-choice ablation (removing `unverifiable`) shows
-its contribution is *not* uniform — it wins Macro F1 (0.6222 vs 0.5851) but loses raw accuracy (0.6982
-vs 0.7134), because forcing a binary choice wrongly disqualifies more truly-eligible trials. F1, the
-metric this project treats as primary, favors three states. Details:
-[`specs/08`](specs/08-eligibility-reasoning.md).
+**Honest negatives.** On 50 test topics, dense beats lexical on no metric at significance ($p\ge0.10$
+across all five) — the dev ladder's monotone look doesn't survive the smaller sample. Reranking
+improves no relevance metric over hybrid ($p\ge0.37$), confirming on unseen data the decision not to
+adopt it ([`specs/07`](specs/07-reranking.md)).
 
-**Scope.** Dev-2021 only. The 2022 test set is scored exactly once, at Phase 11 (not yet run).
+**Where it breaks.** Error analysis of all 80 contaminated top-10 trials: only 40% are genuine
+reasoning errors. 31% are trials the reasoner *correctly disqualified* that the ranking policy kept
+visible; 25% are the three-state design working as designed (the narrative is silent, and silence
+never disqualifies). The grounding check turns out to verify that a quote is *verbatim*, not that it
+is *relevant* — 25% of cases cleared an exclusion criterion with a real but unrelated quote, and all
+of them passed verification.
+
+**On the three-state design:** a forced-choice ablation (removing `unverifiable`, dev-2021) shows its
+contribution is *not* uniform — it wins Macro F1 (0.6222 vs 0.5851) but loses raw accuracy (0.6982 vs
+0.7134), because forcing a binary choice wrongly disqualifies more truly-eligible trials. F1, the
+metric this project treats as primary, favors three states.
+Details: [`specs/08`](specs/08-eligibility-reasoning.md).
+
+Dev-2021 numbers and per-phase detail: [`specs/03`](specs/03-lexical-retrieval.md)–[`specs/08`](specs/08-eligibility-reasoning.md).
 
 ## Setup
 
