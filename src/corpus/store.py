@@ -10,8 +10,18 @@ from __future__ import annotations
 import sqlite3
 
 
-def open_db(path: str = "data/trials.db") -> sqlite3.Connection:
-    conn = sqlite3.connect(path)
+def open_db(path: str = "data/trials.db", check_same_thread: bool = True
+           ) -> sqlite3.Connection:
+    """`check_same_thread=False` — can cho Phase 10: server song goi cac ham
+    doc-chi (get_trial/get_criteria/...) tu nhieu asyncio.to_thread() dong
+    thoi tren MOT connection. SQLite bien dich mac dinh o che do "serialized"
+    (SQLITE_THREADSAFE=1) nen ban than thu vien da tu khoa noi bo — chia se
+    mot connection giua nhieu thread la AN TOAN ve du lieu, chi mat song song
+    that su (cac lenh xep hang cho nhau), khong dang ke voi truy van diem theo
+    khoa chinh nhu o day. Cac script batch (mot tien trinh, mot luong) khong
+    doi hanh vi mac dinh.
+    """
+    conn = sqlite3.connect(path, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     return conn
 

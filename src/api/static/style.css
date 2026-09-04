@@ -1,0 +1,150 @@
+:root {
+  --bg: #f7f7f5;
+  --card: #ffffff;
+  --border: #e0ddd6;
+  --text: #2b2a27;
+  --muted: #6b6862;
+  --accent: #2f5d50;
+  --sat: #2f5d50;
+  --vio: #a13d3d;
+  --unv: #8a7a4a;
+  --disclaimer-bg: #fff4e0;
+  --disclaimer-border: #e0b95c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+header {
+  padding: 24px 20px 8px;
+  max-width: 860px;
+  margin: 0 auto;
+}
+h1 { margin: 0; font-size: 1.5rem; }
+.tagline { color: var(--muted); margin: 4px 0 0; }
+
+.disclaimer {
+  max-width: 860px;
+  margin: 12px auto;
+  padding: 12px 16px;
+  background: var(--disclaimer-bg);
+  border: 1px solid var(--disclaimer-border);
+  border-radius: 8px;
+  font-size: 0.92rem;
+}
+
+.quota-bar {
+  max-width: 860px;
+  margin: 0 auto 12px;
+  padding: 4px 20px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+main { max-width: 860px; margin: 0 auto; padding: 0 20px 60px; }
+
+#match-form { display: flex; flex-direction: column; gap: 8px; }
+label { font-weight: 600; font-size: 0.9rem; }
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  resize: vertical;
+}
+.row { display: flex; justify-content: space-between; align-items: center; }
+#char-count { font-size: 0.8rem; color: var(--muted); }
+
+button {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button:not(:disabled):hover { filter: brightness(1.1); }
+
+.progress {
+  margin-top: 20px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+.progress .line { margin: 2px 0; }
+.progress .line.active { color: var(--text); font-weight: 600; }
+
+#results { margin-top: 20px; display: flex; flex-direction: column; gap: 14px; }
+
+.trial-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px;
+}
+.trial-card summary {
+  cursor: pointer;
+  list-style: none;
+}
+.trial-card summary::-webkit-details-marker { display: none; }
+.trial-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.trial-head .nct { font-family: ui-monospace, monospace; color: var(--muted); font-size: 0.82rem; }
+.trial-head h3 { margin: 2px 0 4px; font-size: 1.02rem; }
+.trial-meta { font-size: 0.8rem; color: var(--muted); }
+.badge-row { display: flex; gap: 8px; margin-top: 6px; }
+.badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.badge.sat { background: #e4efe9; color: var(--sat); }
+.badge.vio { background: #f6e5e5; color: var(--vio); }
+.badge.unv { background: #f2edda; color: var(--unv); }
+
+.criteria-table { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.crit-row { padding: 8px 0; border-bottom: 1px dashed var(--border); }
+.crit-row:last-child { border-bottom: none; }
+.crit-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.crit-label.satisfied { color: var(--sat); }
+.crit-label.violated { color: var(--vio); }
+.crit-label.unverifiable { color: var(--unv); }
+.crit-section { font-size: 0.72rem; color: var(--muted); margin-left: 6px; }
+.crit-quote { font-size: 0.88rem; margin: 4px 0; }
+.crit-evidence { font-size: 0.86rem; color: var(--muted); margin: 2px 0; }
+.crit-evidence .tag { font-weight: 600; color: var(--text); }
+.crit-reasoning { font-size: 0.82rem; color: var(--muted); font-style: italic; margin-top: 2px; }
+.unv-note { font-size: 0.82rem; color: var(--unv); font-style: italic; }
+
+.error-box {
+  background: #f6e5e5;
+  border: 1px solid #d99;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  color: var(--vio);
+}

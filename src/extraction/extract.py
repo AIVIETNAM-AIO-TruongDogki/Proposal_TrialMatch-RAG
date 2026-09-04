@@ -64,6 +64,30 @@ def _save(path: str, ph: str, model: str, recs: dict) -> None:
               open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 
 
+def extract_one(narrative: str, model: str = gemini.MODEL
+                ) -> tuple[dict | None, list[dict], dict]:
+    """Trich xuat MOT benh an moi tai thoi diem request — khong dinh vao topic
+    nam nao, khong dinh vao cache tren dia.
+
+    Tra ve (clean, dropped, meta). `clean` la ho so da qua loc grounding, `None`
+    neu model tra sai schema. Tai dung dung nguyen `schema.batch_schema(1)` /
+    `schema.batch_user_prompt([narrative])` — schema lo da nhan mang do dai bat
+    ky, mot phan tu chi la truong hop n=1, khong can schema rieng.
+    """
+    out, meta = gemini.chat_json(model, schema.BATCH_SYSTEM_PROMPT,
+                                 schema.batch_user_prompt([narrative]),
+                                 schema.batch_schema(1))
+    items = (out or {}).get("profiles") or []
+    it = next((x for x in items if isinstance(x, dict) and x.get("index") == 0), None)
+    if it is None:
+        return None, [], meta
+    prof = {k: v for k, v in it.items() if k != "index"}
+    if not verify.schema_ok(prof):
+        return None, [], meta
+    clean, dropped = verify.verify_profile(prof, narrative)
+    return clean, dropped, meta
+
+
 def run(model: str, year: int, limit: int | None = None,
         profile_dir: str = PROFILE_DIR, force: bool = False,
         batch_size: int = BATCH_SIZE) -> int:

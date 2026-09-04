@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrialMatch-RAG — live demo</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>TrialMatch-RAG</h1>
+  <p class="tagline">Eligibility-aware clinical trial matching — live, end-to-end.</p>
+</header>
+
+<div class="disclaimer">
+  <strong>Decision support only — not a clinical eligibility determination.</strong>
+  Review with a clinician or trial coordinator before acting on this output.
+</div>
+
+<div class="quota-bar" id="quota-bar">checking demo budget…</div>
+
+<main>
+  <form id="match-form">
+    <label for="narrative">Patient narrative</label>
+    <textarea id="narrative" maxlength="4000" rows="6"
+      placeholder="A 45-year-old man with anaplastic astrocytoma of the spine, s/p field radiation and 11 cycles of temozolomide…"></textarea>
+    <div class="row">
+      <span id="char-count">0 / 4000</span>
+      <button type="submit" id="submit-btn">Find matching trials</button>
+    </div>
+  </form>
+
+  <div id="progress" class="progress" hidden></div>
+
+  <div id="results"></div>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
