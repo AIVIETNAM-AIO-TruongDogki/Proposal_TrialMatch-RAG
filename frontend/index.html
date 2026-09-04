@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TrialMatch-RAG — live demo</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
@@ -35,6 +35,13 @@
   <div id="results"></div>
 </main>
 
-<script src="/app.js"></script>
+<script>
+  // Backend API URL — point this at your deployed backend. Defaults to a
+  // backend run locally per the README's "Live demo" section. Leave as ""
+  // (empty string) only if something else proxies /quota and /match/stream
+  // to the API on this same origin.
+  window.TRIALMATCH_API_BASE = "http://localhost:8000";
+</script>
+<script src="app.js"></script>
 </body>
 </html>

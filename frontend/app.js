@@ -1,3 +1,8 @@
+// Backend URL — set via window.TRIALMATCH_API_BASE in index.html before this
+// script loads. Empty string means same-origin (only works if something else
+// proxies /quota and /match/stream to the API on this same host).
+const API_BASE = window.TRIALMATCH_API_BASE || "";
+
 const form = document.getElementById("match-form");
 const textarea = document.getElementById("narrative");
 const charCount = document.getElementById("char-count");
@@ -17,7 +22,7 @@ textarea.addEventListener("input", () => {
 
 async function refreshQuota() {
   try {
-    const r = await fetch("/quota");
+    const r = await fetch(`${API_BASE}/quota`);
     const q = await r.json();
     quotaBar.textContent =
       `Live demo budget today: ${q.calls_used_today}/${q.daily_cap} Gemini calls used ` +
@@ -98,7 +103,7 @@ form.addEventListener("submit", (e) => {
   const cardsByNct = {};
   setProgress([{ text: "Connecting…", active: true }]);
 
-  const url = `/match/stream?narrative=${encodeURIComponent(narrative)}`;
+  const url = `${API_BASE}/match/stream?narrative=${encodeURIComponent(narrative)}`;
   const es = new EventSource(url);
 
   es.addEventListener("stage", (ev) => {
