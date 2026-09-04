@@ -1,90 +1,78 @@
 # TrialMatch-RAG
 
 Eligibility-aware retrieval and reasoning for patient-to-clinical-trial matching, evaluated on the
-TREC Clinical Trials 2021/2022 benchmark. The core idea: medical relevance does not imply
-eligibility — a trial can be a near-perfect topical match for a patient and still exclude them on a
-single criterion. This project measures whether explicit, three-state (`satisfied` / `violated` /
-`unverifiable`), grounded eligibility reasoning improves trial matching over lexical or dense
-retrieval alone.
+TREC Clinical Trials 2021/2022 benchmark. Core idea: medical relevance does not imply eligibility —
+a trial can be a near-perfect topical match and still exclude the patient on one criterion.
 
-Full design, invariants, and the phase-by-phase build plan live in [`specs/`](specs/README.md) —
-start there, not here. This file only covers getting the project running.
+Full design, invariants, and phase-by-phase build log: [`specs/`](specs/README.md).
+
+## Method
+
+```
+patient narrative → extraction → hybrid retrieval (BM25 ∥ dense, RRF) → per-criterion
+eligibility reasoning (satisfied / violated / unverifiable, grounded) → ranked trials
+```
+
+Reranking was benchmarked and dropped (negative result, see Results). Every eligibility decision
+cites the exact criterion text and patient-narrative span it's based on; missing information is
+reported as `unverifiable`, never guessed.
+
+## Results
+
+Dev set (TREC 2021, 75 narratives), full 375,580-trial corpus. Full write-up:
+[`paper/trialmatch-rag.tex`](paper/trialmatch-rag.tex); detail + significance tests:
+[`specs/05`](specs/05-dense-retrieval.md)–[`specs/08`](specs/08-eligibility-reasoning.md).
+
+| Rung | Configuration | elig nDCG@10 | Recall@1000 | Contamination@10 ↓ |
+|---|---|---|---|---|
+| 1 | Lexical (BM25) | 0.2782 | 0.5307 | 0.3240 |
+| 2 | Dense (`qwen3`) | 0.2918 | 0.6050 | 0.2547 |
+| 3 | Hybrid (RRF) | 0.3501 | **0.6490** | 0.3573 |
+| 4 | + reranking — *not adopted* | 0.3356 | n/a | see [specs/07](specs/07-reranking.md) |
+| 5 | **+ eligibility reasoning** | **0.4182** | **0.6490** | **0.2813** |
+
+**Central finding.** Three independent tiers of the pipeline (indexing, querying, model choice) all
+showed the same pattern: improving medical relevance *increased* contamination. Rung 5 reverses that,
+with significance — contamination@10 drops $0.3573\to0.2813$ ($p<0.0001$), at **no** cost to official
+nDCG@10 ($0.5309\to0.5472$, $p=0.31$).
+
+**On the three-state design specifically:** a forced-choice ablation (removing `unverifiable`) shows
+its contribution is *not* uniform — it wins Macro F1 (0.6222 vs 0.5851) but loses raw accuracy (0.6982
+vs 0.7134), because forcing a binary choice wrongly disqualifies more truly-eligible trials. F1, the
+metric this project treats as primary, favors three states. Details:
+[`specs/08`](specs/08-eligibility-reasoning.md).
+
+**Scope.** Dev-2021 only. The 2022 test set is scored exactly once, at Phase 11 (not yet run).
 
 ## Setup
 
-Almost nothing except source code is committed to git — `rawdata/` (the corpus), `data/`,
-`indexes/`, `runs/`, `results/`, `.venv/`, and `.env` are all gitignored (~25 GB combined) and must
-be rebuilt or fetched on every new machine.
+`rawdata/`, `data/`, `indexes/`, `runs/`, `results/`, `.venv/`, `.env` are gitignored and must be
+rebuilt per machine.
 
-1. **Clone**, then copy the env template and fill it in:
-   ```
-   cp .env.example .env
-   ```
-   - `GEMINI_API_KEY_1/2/3` — three Gemini API keys, rotated round-robin by
-     [`src/extraction/gemini.py`](src/extraction/gemini.py) for Phase 4 extraction.
-   - `HF_DATASET_REPO` — the Hugging Face dataset repo holding `rawdata.tar.gz` (see below).
-     `HF_TOKEN` is only needed if that repo is private.
+```bash
+cp .env.example .env                # fill in GEMINI_API_KEY_1 (+ _2, _3, ... optional), HF_DATASET_REPO
+python -m src.fetch_data             # pulls rawdata/ from HF_DATASET_REPO
+uv sync --inexact                    # never bare `uv sync` — see docs/decisions/data-fetch-recovery.md
+PYTHONPATH=. .venv/bin/python -m src.corpus.build_db
+PYTHONPATH=. .venv/bin/python -m src.retrieval.export_corpus
+PYTHONPATH=. .venv/bin/python -m src.retrieval.build_index
+```
 
-2. **Get `rawdata/`** (8.9 GB — the April 2021 ClinicalTrials.gov snapshot + TREC 2021/2022
-   topics/qrels):
-   ```
-   python -m src.fetch_data
-   ```
-   This downloads `rawdata.tar.gz` from `HF_DATASET_REPO` and extracts it. If `rawdata/` isn't on
-   Hugging Face yet, produce it once from a machine that already has it:
-   ```
-   tar -czf rawdata.tar.gz rawdata/      # from the project root, not from inside rawdata/
-   hf auth login
-   hf upload <your-repo> rawdata.tar.gz --repo-type=dataset
-   ```
-   (Do **not** run `hf upload <repo> .` from the project root — `hf upload` has no built-in
-   gitignore-style exclusion and would try to upload `.env`, `.venv/`, `.git/`, and everything else
-   in the tree.) See [`docs/decisions/data-fetch-recovery.md`](docs/decisions/data-fetch-recovery.md)
-   for the full story, including a from-scratch fallback if the Hugging Face copy is ever lost.
+Dense index (needed for hybrid/reasoning/demo, ~3.5h on an 8GB GPU, sharded/checkpointed):
+```bash
+PYTHONPATH=. .venv/bin/python -m src.dense.encode --self-test
+for n in 0 1 2 3; do PYTHONPATH=. .venv/bin/python -m src.dense.encode \
+    --model qwen3 --input data/jsonl/base --out indexes/dense/qwen3.base.npz --shard $n; done
+PYTHONPATH=. .venv/bin/python -m src.dense.encode --model qwen3 --out indexes/dense/qwen3.base.npz --merge
+```
 
-3. **Install dependencies** — either:
-   ```
-   uv sync --inexact
-   ```
-   or, without `uv`:
-   ```
-   python -m venv .venv && .venv/bin/pip install -r requirements.txt
-   ```
-   **Use `--inexact`, never bare `uv sync`.** `pyproject.toml`/`uv.lock` only lock the packages
-   from `requirements.txt` — retrieval/embedding work (Phases 3/5) needs `pyserini`,
-   `sentence-transformers`, `torch`, `transformers`, none of which are declared there yet (a
-   pre-existing gap, not new). Bare `uv sync` prunes the venv to *exactly* match the lockfile and
-   will silently uninstall all of those. `--inexact` locks/installs what's declared without removing
-   anything else already present. See
-   [`docs/decisions/data-fetch-recovery.md`](docs/decisions/data-fetch-recovery.md) for the incident
-   this caused while writing this file.
+Smoke test: `PYTHONPATH=. .venv/bin/python -m src.retrieval.bm25 --index indexes/bm25-base --year 2021 --out runs/bm25.dev.txt && PYTHONPATH=. .venv/bin/python -m src.eval.score runs/bm25.dev.txt --year 2021`
 
-4. **Build the corpus DB and BM25 index** from `rawdata/`:
-   ```
-   PYTHONPATH=. .venv/bin/python -m src.corpus.build_db
-   PYTHONPATH=. .venv/bin/python -m src.retrieval.export_corpus
-   PYTHONPATH=. .venv/bin/python -m src.retrieval.build_index
-   ```
-   Each step prints where it wrote its output and roughly how long it took. See
-   [`specs/01-corpus-construction.md`](specs/01-corpus-construction.md) and
-   [`specs/03-lexical-retrieval.md`](specs/03-lexical-retrieval.md) for what these numbers should
-   look like and for the tuned index configuration the evaluation results are built on.
+## Live demo
 
-5. **Confirm it actually works** — run BM25 with the raw patient narrative as the query and score it:
-   ```
-   PYTHONPATH=. .venv/bin/python -m src.retrieval.bm25 --index indexes/bm25-base --year 2021 --out runs/bm25.dev.txt
-   PYTHONPATH=. .venv/bin/python -m src.eval.score runs/bm25.dev.txt --year 2021
-   ```
-   or run the Phase 4 extraction smoke path (needs the Gemini keys from step 1):
-   ```
-   python -m src.extraction.gemini --self-test
-   PYTHONPATH=. .venv/bin/python -m src.extraction.extract --year 2021 --limit 5
-   ```
-
-## What isn't automatic
-
-- `.venv` and every gitignored data directory must be rebuilt (steps above) or manually copied —
-  nothing is fetched automatically except `rawdata/` via `src/fetch_data.py`.
-- `.env` is never committed or auto-populated. Secrets and repo IDs are yours to manage.
-- Model/backend choices (embeddings, reranking, the extraction/reasoning LLM) are deliberately left
-  open — see [`specs/README.md`](specs/README.md) for what's decided so far and why.
+```bash
+PYTHONPATH=. .venv/bin/python -m uvicorn src.api.app:app --port 8000
+```
+Runs the real pipeline live for any typed-in narrative, streaming progress over SSE. Needs the DB +
+both indexes built and `GEMINI_API_KEY_*` set. Rate-limited/budget-capped (`src/api/quota.py`) —
+it's a real quota consumer. Decision support only, never a bare "eligible".
