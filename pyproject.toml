@@ -6,6 +6,11 @@ requires-python = ">=3.12"
 dependencies = [
     "fsspec==2026.6.0",
     "google-genai==2.20.0",
+    # Import truc tiep trong src/extraction/gemini.py, khong phai qua google-genai.
+    # Truoc day no chi co mat vi la dependency bac cau cua google-genai — nghia la
+    # tang extraction se hong im lang neu google-genai doi client HTTP. Khai bao
+    # rieng vi code goi thang no.
+    "httpx==0.28.1",
     "huggingface-hub==1.29.0",
     "ir-datasets==0.6.3",
     "lxml==6.1.2",
