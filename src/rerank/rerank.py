@@ -114,30 +114,50 @@ class _QwenReranker:
 
 
 def load_reranker(key: str, device: str = "cuda"):
-    name = MODELS[key]
+    """`key` is either a name in MODELS or a HF id / local path used verbatim.
+
+    The passthrough exists so a reranker that isn't one of the three benchmarked
+    baselines — a fine-tuned checkpoint on disk, say — can be scored without
+    editing this dict. It loads as a cross-encoder, which is right for anything
+    with a sequence-classification head; an LLM-style reranker needs its own
+    class, as `_QwenReranker` shows.
+
+    Nothing validates that an unknown checkpoint ranks the right way round, so
+    run `--self-test --model <path>` first: a head trained with num_labels=2
+    puts the NEGATIVE class at logit 0, and `_CrossEncoder.score` reads
+    `logits[:, 0]`, which silently inverts every ranking.
+    """
+    name = MODELS.get(key, key)
     return (_QwenReranker(name, device) if key == "qwen3"
             else _CrossEncoder(name, device))
 
 
-def self_test(device: str = "cuda") -> bool:
-    """A relevant pair must score higher than an unrelated pair — for all three families."""
+def self_test(device: str = "cuda", keys: list[str] | None = None) -> bool:
+    """A relevant pair must score higher than an unrelated pair.
+
+    Default is the three benchmarked families; pass `keys` to check an
+    unbenchmarked checkpoint before spending 7,500 pairs on it. This is the only
+    thing standing between a wrongly-oriented classification head and a run that
+    completes normally with every ranking reversed.
+    """
     q = "45-year-old man with anaplastic astrocytoma of the spine, prior radiation."
     rel = "Phase II study of temozolomide in adults with recurrent anaplastic astrocytoma."
     unrel = "Dietary sodium reduction in healthy adolescents: a randomized trial."
     ok_all = True
-    for key in MODELS:
+    for key in (keys or list(MODELS)):
+        label = key if len(key) <= 28 else "..." + key[-25:]
         try:
             rr = load_reranker(key, device)
             s_rel, s_unrel = rr.score(q, [rel, unrel])
             ok = s_rel > s_unrel
-            print(f"  {key:8s} rel={s_rel:+8.3f}  unrel={s_unrel:+8.3f}  "
-                  f"{'DAT' if ok else 'KHONG DAT'}")
+            print(f"  {label:28s} rel={s_rel:+8.3f}  unrel={s_unrel:+8.3f}  "
+                  f"{'DAT' if ok else 'KHONG DAT — xep NGUOC'}")
             ok_all &= ok
             del rr
             import torch
             torch.cuda.empty_cache()
         except Exception as e:
-            print(f"  {key:8s} LOI: {e}", file=sys.stderr)
+            print(f"  {label:28s} LOI: {e}", file=sys.stderr)
             ok_all = False
     return ok_all
 
@@ -192,7 +212,8 @@ def main() -> int:
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--run", help="run dau vao (vd runs/hybrid.dev.txt)")
     ap.add_argument("--bench", help="chay ca ba model tren run nay")
-    ap.add_argument("--model", choices=list(MODELS))
+    ap.add_argument("--model", help=f"{'|'.join(MODELS)}, hoac HF id / duong dan "
+                                     "local bat ky (nap nhu cross-encoder)")
     ap.add_argument("--out")
     ap.add_argument("--year", type=int, default=data.DEV_YEAR, choices=[2021, 2022])
     ap.add_argument("--depth", type=int, default=DEPTH)
@@ -200,8 +221,9 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
-        print("Self-test ba reranker (lien quan phai cao hon khong lien quan):")
-        ok = self_test(args.device)
+        keys = [args.model] if args.model else None
+        print("Self-test (lien quan phai cao hon khong lien quan):")
+        ok = self_test(args.device, keys)
         print("TAT CA DAT" if ok else "CO RERANKER KHONG DAT")
         return 0 if ok else 1
 
@@ -228,7 +250,9 @@ def main() -> int:
         print(f"== {key} ==")
         r, el = rerank_run(base, topics, key, args.depth, args.device)
         a = metrics.aggregate(metrics.evaluate(r, qrels))
-        out = args.out or f"runs/rerank_{key}.dev.txt"
+        # `key` can be a path when it isn't one of MODELS, and a '/' in it would
+        # be read as a directory that doesn't exist. Keep the last segment only.
+        out = args.out or f"runs/rerank_{key.rstrip('/').split('/')[-1]}.dev.txt"
         run_io.write_run(out, r, f"rerank_{key}", depth=args.depth)
         rows.append({"model": key, "elig_ndcg10": a["eligible/ndcg_cut_10"],
                      "official_ndcg10": a["official/ndcg_cut_10"],

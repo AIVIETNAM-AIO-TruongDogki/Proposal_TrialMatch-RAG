@@ -103,7 +103,12 @@ T5=${PREFIX}5_elig.${SPLIT};    R5=runs/${T5}.txt
 # chay medcpt roi chay bge se ghi de len nhau trong ca runs/ lan results/ ma
 # khong bao gi — ban van co mot bang so, chi la sai. Cac bac khac giu nguyen ten
 # vi doi reranker khong lam chung thay doi.
-T4=${PREFIX}4_rerank-${RERANK_MODEL}.${SPLIT};  R4=runs/${T4}.txt
+#
+# RERANK_MODEL co the la mot duong dan (/kaggle/working/... hoac to-chuc/ten-model),
+# nen phai rut gon thanh slug: de nguyen thi dau '/' bien thanh thu muc va
+# `run_io.write_run` se hong vi thu muc do khong ton tai.
+RR_SLUG=$(printf '%s' "$RERANK_MODEL" | sed 's#/*$##; s#.*/##; s#[^A-Za-z0-9._-]#_#g')
+T4=${PREFIX}4_rerank-${RR_SLUG}.${SPLIT};  R4=runs/${T4}.txt
 mkdir -p runs results logs
 
 LOG=logs/${PREFIX}_${YEAR}_$(date +%Y%m%d-%H%M%S).log
