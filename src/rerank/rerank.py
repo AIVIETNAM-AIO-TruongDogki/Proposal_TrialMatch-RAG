@@ -45,11 +45,25 @@ MODELS = {
 
 
 class _CrossEncoder:
-    """MedCPT / bge — a real cross-encoder, score = logit[0]."""
+    """MedCPT / bge — a real cross-encoder, score = logit[0].
+
+    Also handles a 3-label NLI head (an MedNLI checkpoint, say), which is a
+    different object wearing the same interface. There `logit[0]` is one class
+    among three rather than a relevance score, so scoring switches to
+    `logP(entailment) - logP(contradiction)` — the same contrastive form
+    `_QwenReranker` uses for yes/no, and for the same reason: a raw logit
+    ignores how much probability mass the other classes took, so two documents
+    with equal entailment logits but very different contradiction logits would
+    rank equal.
+
+    The switch is driven by the checkpoint's own `id2label`, never by the file
+    name, and it prints which mode it chose — an NLI model silently scored as a
+    reranker produces a full set of plausible numbers.
+    """
 
     MAX_LEN = 512
 
-    def __init__(self, name: str, device: str = "cuda"):
+    def __init__(self, name: str, device: str = "cuda", score_mode: str = "auto"):
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
         self.torch = torch
@@ -58,6 +72,22 @@ class _CrossEncoder:
         self.mod = (AutoModelForSequenceClassification
                     .from_pretrained(name).to(device).eval().half())
 
+        labels = {str(v).lower(): int(k)
+                  for k, v in (self.mod.config.id2label or {}).items()}
+        self.nli = None
+        if score_mode in ("auto", "nli") and "entailment" in labels and "contradiction" in labels:
+            self.nli = (labels["entailment"], labels["contradiction"])
+        if score_mode == "logit0":
+            self.nli = None
+        if self.nli:
+            print(f"  [{name}] head NLI {self.mod.config.num_labels} nhan "
+                  f"{self.mod.config.id2label} -> cham bang "
+                  f"logP(entailment) - logP(contradiction)")
+        elif self.mod.config.num_labels > 1:
+            print(f"  [{name}] CANH BAO: head {self.mod.config.num_labels} nhan "
+                  f"{self.mod.config.id2label} nhung cham bang logit[0]. "
+                  f"Kiem tra logit[0] co phai diem lien quan khong.")
+
     def score(self, query: str, docs: list[str], bs: int = BATCH) -> list[float]:
         out = []
         for i in range(0, len(docs), bs):
@@ -65,8 +95,13 @@ class _CrossEncoder:
                            truncation=True, padding=True, max_length=self.MAX_LEN,
                            return_tensors="pt").to(self.device)
             with self.torch.no_grad():
-                logits = self.mod(**enc).logits
-            out += logits[:, 0].float().cpu().tolist()
+                logits = self.mod(**enc).logits.float()
+            if self.nli:
+                ent, con = self.nli
+                lp = self.torch.nn.functional.log_softmax(logits, dim=-1)
+                out += (lp[:, ent] - lp[:, con]).cpu().tolist()
+            else:
+                out += logits[:, 0].cpu().tolist()
         return out
 
 
@@ -113,26 +148,32 @@ class _QwenReranker:
         return out
 
 
-def load_reranker(key: str, device: str = "cuda"):
+def load_reranker(key: str, device: str = "cuda", score_mode: str = "auto"):
     """`key` is either a name in MODELS or a HF id / local path used verbatim.
 
     The passthrough exists so a reranker that isn't one of the three benchmarked
     baselines — a fine-tuned checkpoint on disk, say — can be scored without
     editing this dict. It loads as a cross-encoder, which is right for anything
     with a sequence-classification head; an LLM-style reranker needs its own
-    class, as `_QwenReranker` shows.
+    class, as `_QwenReranker` shows. `_CrossEncoder` itself branches again on
+    the head's `id2label`: a binary relevance head scores by `logit[0]`, a
+    3-label NLI head (entailment/neutral/contradiction) scores by
+    `logP(entailment) - logP(contradiction)` — see its docstring.
+
+    `score_mode` overrides that auto-detection ("logit0" | "nli" | "auto");
+    almost never needed, kept as an escape hatch if id2label is ever wrong.
 
     Nothing validates that an unknown checkpoint ranks the right way round, so
-    run `--self-test --model <path>` first: a head trained with num_labels=2
-    puts the NEGATIVE class at logit 0, and `_CrossEncoder.score` reads
-    `logits[:, 0]`, which silently inverts every ranking.
+    run `--self-test --model <path>` first: a binary head trained with the
+    classes swapped, or an NLI head misread, silently inverts every ranking.
     """
     name = MODELS.get(key, key)
     return (_QwenReranker(name, device) if key == "qwen3"
-            else _CrossEncoder(name, device))
+            else _CrossEncoder(name, device, score_mode))
 
 
-def self_test(device: str = "cuda", keys: list[str] | None = None) -> bool:
+def self_test(device: str = "cuda", keys: list[str] | None = None,
+              score_mode: str = "auto") -> bool:
     """A relevant pair must score higher than an unrelated pair.
 
     Default is the three benchmarked families; pass `keys` to check an
@@ -147,7 +188,7 @@ def self_test(device: str = "cuda", keys: list[str] | None = None) -> bool:
     for key in (keys or list(MODELS)):
         label = key if len(key) <= 28 else "..." + key[-25:]
         try:
-            rr = load_reranker(key, device)
+            rr = load_reranker(key, device, score_mode)
             s_rel, s_unrel = rr.score(q, [rel, unrel])
             ok = s_rel > s_unrel
             print(f"  {label:28s} rel={s_rel:+8.3f}  unrel={s_unrel:+8.3f}  "
@@ -172,10 +213,10 @@ def doc_texts(nct_ids: list[str], conn) -> dict[str, str]:
 
 
 def rerank_run(run: dict, topics: dict[str, str], key: str, depth: int = DEPTH,
-               device: str = "cuda", db: str = "data/trials.db"
-               ) -> tuple[dict, float]:
+               device: str = "cuda", db: str = "data/trials.db",
+               score_mode: str = "auto") -> tuple[dict, float]:
     conn = store.open_db(db)
-    rr = load_reranker(key, device)
+    rr = load_reranker(key, device, score_mode)
     out: dict[str, dict[str, float]] = {}
     t0 = time.time()
     for n, tid in enumerate(sorted(run), 1):
@@ -218,12 +259,16 @@ def main() -> int:
     ap.add_argument("--year", type=int, default=data.DEV_YEAR, choices=[2021, 2022])
     ap.add_argument("--depth", type=int, default=DEPTH)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--score-mode", default="auto", choices=["auto", "logit0", "nli"],
+                    help="cach doc logit cua head phan loai — 'auto' doc tu id2label "
+                         "cua checkpoint, 'nli' ep logP(entailment)-logP(contradiction), "
+                         "'logit0' ep logit[0] tho. Hau nhu khong bao gio can dat tay.")
     args = ap.parse_args()
 
     if args.self_test:
         keys = [args.model] if args.model else None
         print("Self-test (lien quan phai cao hon khong lien quan):")
-        ok = self_test(args.device, keys)
+        ok = self_test(args.device, keys, args.score_mode)
         print("TAT CA DAT" if ok else "CO RERANKER KHONG DAT")
         return 0 if ok else 1
 
@@ -248,7 +293,8 @@ def main() -> int:
     rows = []
     for key in keys:
         print(f"== {key} ==")
-        r, el = rerank_run(base, topics, key, args.depth, args.device)
+        r, el = rerank_run(base, topics, key, args.depth, args.device,
+                          score_mode=args.score_mode)
         a = metrics.aggregate(metrics.evaluate(r, qrels))
         # `key` can be a path when it isn't one of MODELS, and a '/' in it would
         # be read as a directory that doesn't exist. Keep the last segment only.
