@@ -4,11 +4,16 @@
 #   retrieval (lexical -> dense -> hybrid) -> rerank -> reasoning -> generation
 # va cham diem sau moi bac.
 #
-#   bash scripts/run_ladder.sh                      # bac 1-4, bac 5 chi UOC LUONG
-#   bash scripts/run_ladder.sh --yes                # chay that ca bac 5 (ton quota)
-#   bash scripts/run_ladder.sh --stages 1,2,3       # chi mot phan
-#   bash scripts/run_ladder.sh --dry-run            # in lenh, khong chay
-#   PY=python bash scripts/run_ladder.sh            # tren Kaggle (khong co .venv)
+#   bash scripts/run_ladder.sh                        # bac 0-4, bac 5 chi UOC LUONG
+#   bash scripts/run_ladder.sh --yes                  # chay that ca bac 5 (ton quota)
+#   bash scripts/run_ladder.sh --rerank-model qwen3   # doi reranker
+#   bash scripts/run_ladder.sh --rerank-model all     # quet ca ba reranker
+#   bash scripts/run_ladder.sh --stages 1,2,3         # chi mot phan
+#   bash scripts/run_ladder.sh --dry-run              # in lenh, khong chay
+#   PY=python bash scripts/run_ladder.sh              # tren Kaggle (khong co .venv)
+#
+# Model doi duoc bang co dong lenh CHI CO reranker (medcpt | bge | qwen3 | all).
+# Dense va reasoning co dinh — ly do ghi ngay tren khai bao cua chung ben duoi.
 #
 # BA DIEU SCRIPT NAY CO TINH LAM:
 #
@@ -34,10 +39,22 @@ export PYTHONPATH=${PYTHONPATH:-.}
 YEAR=2021
 PREFIX=ladder
 DEVICE=cuda
-STAGES=1,2,3,4,5
+STAGES=0,1,2,3,4,5
 RERANK_MODEL=medcpt
 LEXMODE=prof_narr
 TOP_N=20
+
+# Hai model KHONG phai co dong lenh, va do la co y:
+#   dense — chi qwen3.base.npz la full corpus (375.580 doc); moi .npz khac deu la
+#     mau con 46.162 doc. Doi ten model dense khong phai doi mot co, phai encode
+#     lai ca corpus (~3,5h GPU).
+#   reasoning — cache_path() la {year}.{model}.{mode}.json, nen doi model la sinh
+#     cache moi hoan toan: vut 1.499 cap da suy luan va goi lai tu dau.
+# Chung dung o day de banner in ra duoc va de dinh vi dung file profile/cache.
+DENSE_MODEL=qwen3
+DENSE_VECS=indexes/dense/qwen3.base.npz
+REASON_MODEL=gemini-3.5-flash-lite
+LEX_INDEX=indexes/bm25-critfields
 FORCE=0
 YES=0
 DRY=0
@@ -51,7 +68,8 @@ while [ $# -gt 0 ]; do
     --prefix)   PREFIX=$2; shift 2 ;;
     --device)   DEVICE=$2; shift 2 ;;
     --stages)   STAGES=$2; shift 2 ;;
-    --model)    RERANK_MODEL=$2; shift 2 ;;
+    --rerank-model) RERANK_MODEL=$2; shift 2 ;;
+    --model)    RERANK_MODEL=$2; shift 2 ;;   # bi danh cua --rerank-model
     --lexical)  LEXMODE=$2; shift 2 ;;
     --top-n)    TOP_N=$2; shift 2 ;;
     --force)    FORCE=1; shift ;;
@@ -79,8 +97,13 @@ SPLIT=dev; [ "$YEAR" = "2022" ] && SPLIT=test
 T1=${PREFIX}1_bm25.${SPLIT};    R1=runs/${T1}.txt
 T2=${PREFIX}2_dense.${SPLIT};   R2=runs/${T2}.txt
 T3=${PREFIX}3_hybrid.${SPLIT};  R3=runs/${T3}.txt
-T4=${PREFIX}4_rerank.${SPLIT};  R4=runs/${T4}.txt
 T5=${PREFIX}5_elig.${SPLIT};    R5=runs/${T5}.txt
+
+# Ten bac 4 mang luon ten reranker, ke ca voi model mac dinh. Khong co no thi
+# chay medcpt roi chay bge se ghi de len nhau trong ca runs/ lan results/ ma
+# khong bao gi — ban van co mot bang so, chi la sai. Cac bac khac giu nguyen ten
+# vi doi reranker khong lam chung thay doi.
+T4=${PREFIX}4_rerank-${RERANK_MODEL}.${SPLIT};  R4=runs/${T4}.txt
 mkdir -p runs results logs
 
 LOG=logs/${PREFIX}_${YEAR}_$(date +%Y%m%d-%H%M%S).log
@@ -114,6 +137,33 @@ EOF
 echo "   log: $LOG"
 
 exec > >(tee -a "$LOG") 2>&1
+
+# ------------------------------------------------------------------- cau hinh
+# Mot lan chay tu dong dai hang tram dong; khong co banner nay thi doc lai log cu
+# khong con biet da chay model nao.
+say "Cau hinh"
+printf '   %-11s %-22s %s\n' \
+  "lexical"   "$LEXMODE"      "$LEX_INDEX  k1=1.8 b=1.0" \
+  "dense"     "$DENSE_MODEL"  "$DENSE_VECS" \
+  "rerank"    "$RERANK_MODEL" "depth 100" \
+  "reasoning" "$REASON_MODEL" "top-n $TOP_N   cache data/reasoning/" \
+  "output"    "$PREFIX*"      "runs/ + results/  (nam $YEAR, $SPLIT)"
+
+# ------------------------------------------------------------------- bac 0
+# Trich ho so benh nhan. Chan lexical prof_narr doc file nay; no da co san trong
+# repo nen bac 0 hau nhu khong bao gio chay that — no ton tai cho may sach.
+if has 0; then
+  say "Bac 0 — extraction (ho so benh nhan)"
+  PROF=data/profiles/${YEAR}.${REASON_MODEL}.json
+  if [ -s "$PROF" ]; then
+    echo "   bo qua, da co $PROF"
+  elif [ "$YES" != 1 ]; then
+    echo "   THIEU $PROF va trich lai ton lenh goi Gemini — them --yes de chay."
+    echo "   Bac 1 se hong neu --lexical van la $LEXMODE."
+  else
+    run $PY -m src.extraction.extract --year "$YEAR" --model "$REASON_MODEL"
+  fi
+fi
 
 # ------------------------------------------------------------------- bac 1
 # Chan lexical THAT cua du an la truy van da mo rong bang ho so + narrative
@@ -163,12 +213,20 @@ fi
 # bac 3 — xem chu thich † trong README.
 if has 4; then
   say "Bac 4 — + reranking ($RERANK_MODEL)"
-  if skip "$R4"; then echo "   bo qua, da co $R4"; else
-    run $PY -m src.rerank.rerank --run "$R3" --model "$RERANK_MODEL" \
-        --out "$R4" --year "$YEAR" --device "$DEVICE"
+  if [ "$RERANK_MODEL" = all ]; then
+    # rerank.py --bench chay ca ba model va tu ghi results/_rerank_bench.{year}.json
+    # kem seconds/sec_per_topic. KHONG truyen --out: voi --bench thi
+    # out = args.out or runs/rerank_{key}.dev.txt, nen mot --out se khien ca ba
+    # model ghi de len cung mot file.
+    run $PY -m src.rerank.rerank --bench "$R3" --year "$YEAR" --device "$DEVICE"
+  else
+    if skip "$R4"; then echo "   bo qua, da co $R4"; else
+      run $PY -m src.rerank.rerank --run "$R3" --model "$RERANK_MODEL" \
+          --out "$R4" --year "$YEAR" --device "$DEVICE"
+    fi
+    run $PY -m src.eval.score "$R4" --year "$YEAR" --tag "$T4" \
+        --vs "results/${T3}.json"
   fi
-  run $PY -m src.eval.score "$R4" --year "$YEAR" --tag "$T4" \
-      --vs "results/${T3}.json"
 fi
 
 # ------------------------------------------------------------------- bac 5
@@ -215,16 +273,26 @@ say "Tong ket"
 [ "$DRY" = 1 ] || $PY - "$PREFIX" "$SPLIT" <<'EOF'
 import glob, json, os, sys
 prefix, split = sys.argv[1], sys.argv[2]
-rows = []
-for name, tag in [("1 lexical", "1_bm25"), ("2 dense", "2_dense"),
-                  ("3 hybrid", "3_hybrid"), ("4 rerank", "4_rerank"),
-                  ("5 eligibility", "5_elig")]:
-    p = f"results/{prefix}{tag}.{split}.json"
-    if not os.path.exists(p):
-        continue
-    a = json.load(open(p))["aggregate"]
+
+
+def add(rows, name, path):
+    if not os.path.exists(path):
+        return
+    a = json.load(open(path))["aggregate"]
     rows.append((name, a["eligible/ndcg_cut_10"], a["official/ndcg_cut_10"],
                  a["elig/recall_1000"], a["elig/contamination_10"]))
+
+
+rows = []
+add(rows, "1 lexical", f"results/{prefix}1_bm25.{split}.json")
+add(rows, "2 dense", f"results/{prefix}2_dense.{split}.json")
+add(rows, "3 hybrid", f"results/{prefix}3_hybrid.{split}.json")
+# Moi bien the reranker deu hien thanh mot dong rieng, nen mot lan quet model
+# doc duoc ngay canh nhau thay vi phai mo tung file results.
+for p in sorted(glob.glob(f"results/{prefix}4_rerank-*.{split}.json")):
+    key = os.path.basename(p).split("4_rerank-", 1)[1].rsplit(f".{split}.", 1)[0]
+    add(rows, f"4 rerank {key}", p)
+add(rows, "5 eligibility", f"results/{prefix}5_elig.{split}.json")
 if not rows:
     print("   chua co ket qua nao.")
 else:
